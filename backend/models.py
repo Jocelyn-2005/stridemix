@@ -3,6 +3,24 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+class Tempo(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    bpm: float | None = Field(default=None, ge=30, le=480)
+    confidence: float = Field(default=0, ge=0, le=1)
+    status: Literal["pending", "detected", "uncertain", "unavailable"] = "pending"
+    source: Literal["analysis", "manual", "adapted"] = "analysis"
+
+
+class Adaptation(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    original_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    speed: float = Field(gt=0)
+    reference_cadence: float = Field(ge=60, le=240)
+    target_cadence: float = Field(ge=60, le=240)
+
+
 class Track(BaseModel):
     id: str
     title: str
@@ -10,6 +28,21 @@ class Track(BaseModel):
     source: str
     preview_url: str
     waveform: list[float]
+    tempo: Tempo = Field(default_factory=Tempo)
+    adaptation: Adaptation | None = None
+
+
+class ManualTempoRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    bpm: float = Field(ge=30, le=480)
+
+
+class AdaptRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    cadence: float = Field(ge=60, le=240)
+    reference_cadence: float = Field(ge=60, le=240)
 
 
 class SearchRequest(BaseModel):

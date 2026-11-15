@@ -13,8 +13,12 @@ function createPreview(t) {
   globalThis.Audio = class {
     currentTime = 0;
     playCalls = 0;
-    constructor() { media.push(this); }
-    async play() { this.playCalls += 1; }
+    constructor() {
+      media.push(this);
+    }
+    async play() {
+      this.playCalls += 1;
+    }
     pause() {}
     load() {}
     removeAttribute() {}
@@ -24,14 +28,23 @@ function createPreview(t) {
     destination = {};
     async resume() {}
     async close() {}
-    async decodeAudioData() { return {}; }
+    async decodeAudioData() {
+      return {};
+    }
     createGain() {
       return { gain: { value: 0, setTargetAtTime() {} }, connect() {} };
     }
-    createMediaElementSource() { return { connect() {} }; }
+    createMediaElementSource() {
+      return { connect() {} };
+    }
     createDynamicsCompressor() {
       return {
-        threshold: {}, knee: {}, ratio: {}, attack: {}, release: {}, connect() {},
+        threshold: {},
+        knee: {},
+        ratio: {},
+        attack: {},
+        release: {},
+        connect() {},
       };
     }
     createBufferSource() {
@@ -50,8 +63,12 @@ function createPreview(t) {
     (message) => errors.push(message),
   );
   const tracks = [10, 20].map((duration, index) => ({
-    id: `track-${index}`, title: `Track ${index}`, duration, source: "test",
-    preview_url: `/api/media/track-${index}`, waveform: [],
+    id: `track-${index}`,
+    title: `Track ${index}`,
+    duration,
+    source: "test",
+    preview_url: `/api/media/track-${index}`,
+    waveform: [],
   }));
   engine.setTracks(tracks);
   t.after(() => {
@@ -59,7 +76,7 @@ function createPreview(t) {
     Object.assign(globalThis, originals);
     assert.deepEqual(errors, []);
   });
-  return { engine, states, audio: media[0] };
+  return { engine, states, audio: media[0], tracks };
 }
 
 test("seeking to the end stops there without starting another play", async (t) => {
@@ -100,4 +117,20 @@ test("an explicit play after reaching the end restarts from the first track", as
   assert.equal(states.at(-1).activeIndex, 0);
   assert.equal(audio.currentTime, 0);
   assert.equal(audio.playCalls, 2);
+});
+
+test("BPM metadata updates preserve the current transport", async (t) => {
+  const { engine, states, audio, tracks } = createPreview(t);
+  await engine.play();
+  await engine.seek(5);
+  const calls = audio.playCalls;
+  engine.setTracks(
+    tracks.map((track) => ({
+      ...track,
+      tempo: { bpm: 82.5, confidence: 1, status: "detected", source: "manual" },
+    })),
+  );
+  assert.equal(states.at(-1).playing, true);
+  assert.equal(states.at(-1).position, 5);
+  assert.equal(audio.playCalls, calls);
 });

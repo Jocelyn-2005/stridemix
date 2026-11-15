@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, DragEvent, FormEvent } from "react";
 import {
   ArrowDown,
@@ -35,14 +35,18 @@ import type { ExportJob, Health, SearchResult, Tone, Track } from "./api";
 import { PreviewEngine } from "./audio";
 import type { MixSettings, PlaybackState } from "./audio";
 import { formatTime } from "./timeline";
+import TrackTempo from "./TrackTempo";
+import {
+  createEntry,
+  DEFAULT_SETTINGS,
+  parseProject,
+  replaceEntryTrack,
+  restoreEntries,
+  updateSharedTrack,
+} from "./project";
+import type { PlaylistEntry } from "./project";
 
 const STORAGE_KEY = "stridemix.project.v1";
-const DEFAULT_SETTINGS: MixSettings = {
-  cadence: 165,
-  tone: "click",
-  bgmVolume: 0.65,
-  beatVolume: 0.55,
-};
 const FALLBACK_TONES: Tone[] = [
   { id: "click", name: "经典点击", description: "清脆、直接" },
   { id: "wood", name: "木块敲击", description: "温暖、有质感" },
@@ -52,12 +56,6 @@ const FALLBACK_TONES: Tone[] = [
   { id: "shaker", name: "沙锤", description: "细腻的颗粒感" },
 ];
 
-interface SavedProject {
-  trackIds: string[];
-  settings: MixSettings;
-  format: "mp3" | "wav";
-}
-
 interface ExportSnapshot {
   cadence: number;
   toneName: string;
@@ -65,32 +63,9 @@ interface ExportSnapshot {
   format: "mp3" | "wav";
 }
 
-function readProject(): SavedProject | null {
+function readProject() {
   try {
-    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
-    if (!value || !Array.isArray(value.trackIds)) return null;
-    const settings = value.settings ?? {};
-    const clamp = (
-      number: unknown,
-      minimum: number,
-      maximum: number,
-      fallback: number,
-    ) =>
-      typeof number === "number" && Number.isFinite(number)
-        ? Math.min(maximum, Math.max(minimum, number))
-        : fallback;
-    return {
-      trackIds: value.trackIds.filter((id: unknown) => typeof id === "string"),
-      settings: {
-        cadence: Math.round(clamp(settings.cadence, 60, 240, 165)),
-        tone: FALLBACK_TONES.some((tone) => tone.id === settings.tone)
-          ? settings.tone
-          : "click",
-        bgmVolume: clamp(settings.bgmVolume, 0, 1, 0.65),
-        beatVolume: clamp(settings.beatVolume, 0, 1, 0.55),
-      },
-      format: value.format === "wav" ? "wav" : "mp3",
-    };
+    return parseProject(localStorage.getItem(STORAGE_KEY));
   } catch {
     return null;
   }
@@ -173,7 +148,8 @@ export default function App() {
   const [cadenceDraft, setCadenceDraft] = useState(
     String(saved?.settings.cadence ?? 165),
   );
-  const [tracks, setTracks] = useState<Track[]>([]);
+  const [entries, setEntries] = useState<PlaylistEntry[]>([]);
+  const tracks = useMemo(() => entries.map((entry) => entry.track), [entries]);
   const [tones, setTones] = useState<Tone[]>(FALLBACK_TONES);
   const [health, setHealth] = useState<Health | null>(null);
   const [ready, setReady] = useState(false);
@@ -191,7 +167,9 @@ export default function App() {
   const [dragOver, setDragOver] = useState(false);
   const [format, setFormat] = useState<"mp3" | "wav">(saved?.format ?? "mp3");
   const [job, setJob] = useState<ExportJob | null>(null);
-  const [exportSnapshot, setExportSnapshot] = useState<ExportSnapshot | null>(null);
+  const [exportSnapshot, setExportSnapshot] = useState<ExportSnapshot | null>(
+    null,
+  );
   const [exportStarting, setExportStarting] = useState(false);
   const [playback, setPlayback] = useState<PlaybackState>({
     playing: false,
@@ -222,12 +200,8 @@ export default function App() {
         if (!active) return;
         setHealth(status);
         setTones(availableTones);
-        const restored = saved
-          ? saved.trackIds.flatMap((id) =>
-              library.filter((track) => track.id === id),
-            )
-          : [];
-        setTracks(restored);
+        const restored = saved ? restoreEntries(saved, library) : [];
+        setEntries(restored);
         setReady(true);
         if (saved && restored.length !== saved.trackIds.length)
           setNotice("部分本地素材已不存在，已从编排中移除。");
@@ -243,9 +217,10 @@ export default function App() {
   }, [saved]);
 
   useEffect(() => {
-    playOperation.current += 1;
-    setPlayPending(false);
-    engine.current?.setTracks(tracks);
+    if (engine.current?.setTracks(tracks)) {
+      playOperation.current += 1;
+      setPlayPending(false);
+    }
   }, [tracks]);
   useEffect(() => {
     engine.current?.update(settings);
@@ -261,6 +236,7 @@ export default function App() {
         STORAGE_KEY,
         JSON.stringify({
           trackIds: tracks.map((track) => track.id),
+          entryIds: entries.map((entry) => entry.entryId),
           settings,
           format,
         }),
@@ -268,7 +244,11 @@ export default function App() {
     } catch {
       /* Editing remains available if browser storage is full or disabled. */
     }
-  }, [ready, tracks, settings, format]);
+  }, [ready, tracks, entries, settings, format]);
+
+  const handleTrackUpdate = useCallback((updated: Track) => {
+    setEntries((current) => updateSharedTrack(current, updated));
+  }, []);
 
   useEffect(() => {
     if (!exportActive || !job) return;
@@ -348,7 +328,7 @@ export default function App() {
           method: "POST",
           body: form,
         });
-        setTracks((current) => [...current, track]);
+        setEntries((current) => [...current, createEntry(track)]);
         added += 1;
       }
       setNotice(`已添加 ${added} 条配乐`);
@@ -362,7 +342,7 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ url: value }),
       });
-      setTracks((current) => [...current, track]);
+      setEntries((current) => [...current, createEntry(track)]);
       setUrl("");
       setNotice("配乐已加入编排");
     });
@@ -388,7 +368,7 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ prompt: prompt.trim(), duration: aiDuration }),
       });
-      setTracks((current) => [...current, track]);
+      setEntries((current) => [...current, createEntry(track)]);
       setNotice("AI 配乐已加入编排");
     });
   }
@@ -407,7 +387,9 @@ export default function App() {
       await engine.current?.play();
     } catch (reason) {
       if (operation === playOperation.current) {
-        setError(reason instanceof Error ? reason.message : "无法播放，请重试。");
+        setError(
+          reason instanceof Error ? reason.message : "无法播放，请重试。",
+        );
       }
     } finally {
       if (operation === playOperation.current) setPlayPending(false);
@@ -424,7 +406,7 @@ export default function App() {
   }
 
   function moveTrack(index: number, direction: number) {
-    setTracks((current) => {
+    setEntries((current) => {
       const next = [...current];
       const destination = index + direction;
       [next[index], next[destination]] = [next[destination], next[index]];
@@ -447,7 +429,8 @@ export default function App() {
     const snapshot: ExportSnapshot = {
       cadence: parameters.cadence,
       toneName:
-        tones.find((tone) => tone.id === parameters.tone)?.name ?? parameters.tone,
+        tones.find((tone) => tone.id === parameters.tone)?.name ??
+        parameters.tone,
       duration: totalDuration,
       format: parameters.format,
     };
@@ -484,7 +467,10 @@ export default function App() {
     void uploadFiles(event.dataTransfer.files);
   }
 
-  const beatCount = Math.max(0, Math.ceil((totalDuration * settings.cadence) / 60 - 1e-8));
+  const beatCount = Math.max(
+    0,
+    Math.ceil((totalDuration * settings.cadence) / 60 - 1e-8),
+  );
   let trackStart = 0;
 
   return (
@@ -718,13 +704,14 @@ export default function App() {
                   <p>添加音乐后，试听完整的配乐与步频。</p>
                 </div>
               )}
-              {tracks.map((track, index) => {
+              {entries.map(({ entryId, track }, index) => {
                 const start = trackStart;
                 trackStart += track.duration;
                 return (
                   <article
                     className={`track-row ${playback.playing && playback.activeIndex === index ? "is-playing" : ""}`}
-                    key={`${track.id}-${index}`}
+                    key={entryId}
+                    data-entry-id={entryId}
                   >
                     <button
                       className="track-number"
@@ -756,6 +743,22 @@ export default function App() {
                           playback.activeIndex === index && playback.playing
                         }
                       />
+                      <TrackTempo
+                        track={track}
+                        entryId={entryId}
+                        cadence={settings.cadence}
+                        onTrackUpdate={handleTrackUpdate}
+                        onReplace={(updated) =>
+                          setEntries((current) =>
+                            replaceEntryTrack(
+                              current,
+                              entryId,
+                              track.id,
+                              updated,
+                            ),
+                          )
+                        }
+                      />
                     </div>
                     <div className="track-actions">
                       <button
@@ -777,9 +780,9 @@ export default function App() {
                       <button
                         className="icon-button remove-track"
                         onClick={() =>
-                          setTracks((current) =>
+                          setEntries((current) =>
                             current.filter(
-                              (_, currentIndex) => index !== currentIndex,
+                              (entry) => entry.entryId !== entryId,
                             ),
                           )
                         }
@@ -1120,7 +1123,11 @@ export default function App() {
               )}
               {job?.status === "completed" && job.download_url && (
                 <>
-                  <a className="download-button" href={job.download_url} download>
+                  <a
+                    className="download-button"
+                    href={job.download_url}
+                    download
+                  >
                     <Check size={16} />
                     下载跑步配乐
                     <ArrowDownToLine size={15} />

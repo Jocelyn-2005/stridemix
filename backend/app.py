@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from backend.audio import TONES, AudioError, ffmpeg_executable, write_tone
 from backend.jobs import ExportManager
-from backend.models import ExportRequest, GenerationRequest, SearchRequest, Track, UrlRequest
+from backend.models import AdaptRequest, ExportRequest, GenerationRequest, ManualTempoRequest, SearchRequest, Track, UrlRequest
 from backend.sources import download_video, generate_music, search_music
 from backend.storage import MediaLibrary
 
@@ -41,7 +41,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     application.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type"],
     )
 
@@ -74,6 +74,34 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @application.get("/api/tracks", response_model=list[Track])
     def tracks():
         return library.list()
+
+    @application.get("/api/tracks/{track_id}", response_model=Track)
+    def track(track_id: str):
+        try:
+            return library.get(track_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="素材不存在，请重新导入") from exc
+
+    @application.post("/api/tracks/{track_id}/analyze", response_model=Track)
+    def analyze_track(track_id: str):
+        try:
+            return library.analyze(track_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="素材不存在，请重新导入") from exc
+
+    @application.patch("/api/tracks/{track_id}/tempo", response_model=Track)
+    def manual_tempo(track_id: str, request: ManualTempoRequest):
+        try:
+            return library.set_manual_tempo(track_id, request.bpm)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="素材不存在，请重新导入") from exc
+
+    @application.post("/api/tracks/{track_id}/adapt", response_model=Track)
+    def adapt_track(track_id: str, request: AdaptRequest):
+        try:
+            return library.adapt(track_id, request.cadence, request.reference_cadence)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="原始素材不存在，请重新导入") from exc
 
     @application.post("/api/tracks/upload", response_model=Track)
     async def upload_track(file: UploadFile = File(...)):

@@ -60,11 +60,24 @@ export class PreviewEngine {
   }
 
   setTracks(tracks: Track[]) {
+    const sameAudio =
+      this.tracks.length === tracks.length &&
+      this.tracks.every(
+        (track, index) =>
+          track.id === tracks[index].id &&
+          track.duration === tracks[index].duration &&
+          track.preview_url === tracks[index].preview_url,
+      );
+    if (sameAudio) {
+      this.tracks = tracks;
+      return false;
+    }
     this.pause();
     this.tracks = tracks;
     this.position = 0;
     this.activeIndex = -1;
     this.emit();
+    return true;
   }
 
   update(settings: MixSettings) {

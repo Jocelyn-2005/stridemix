@@ -5,6 +5,22 @@ export interface Track {
   source: string;
   preview_url: string;
   waveform: number[];
+  tempo?: TrackTempo;
+  adaptation?: TrackAdaptation | null;
+}
+
+export interface TrackTempo {
+  bpm: number | null;
+  confidence: number;
+  status: "pending" | "detected" | "uncertain" | "unavailable";
+  source: "analysis" | "manual" | "adapted";
+}
+
+export interface TrackAdaptation {
+  original_id: string;
+  speed: number;
+  reference_cadence: number;
+  target_cadence: number;
 }
 
 export interface Tone {

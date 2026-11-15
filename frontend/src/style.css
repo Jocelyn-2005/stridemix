@@ -656,6 +656,221 @@ input[type="range"]::-moz-range-thumb {
   width: 23px;
   height: 23px;
 }
+.track-tempo {
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid #edf0e5;
+}
+.tempo-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.tempo-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #829269;
+  font-size: 9px;
+}
+.tempo-value strong {
+  font-family: var(--display);
+  color: #536b35;
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1;
+}
+.tempo-edit,
+.tempo-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  color: #8a9a72;
+  font-size: 8px;
+  padding: 3px 0;
+}
+.tempo-edit:hover:not(:disabled),
+.tempo-retry:hover:not(:disabled) {
+  color: #5a7732;
+}
+.tempo-status,
+.tempo-confidence {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #a1ad8e;
+  font-size: 8px;
+  margin-top: 7px;
+  line-height: 1.8;
+}
+.tempo-confidence.uncertain {
+  color: #a3966d;
+}
+.manual-tempo-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.manual-tempo-form label {
+  font-family: var(--display);
+  font-size: 12px;
+  color: #83936a;
+}
+.manual-tempo-form input {
+  min-width: 0;
+  width: 87px;
+  border: 1px solid #dbe4cb;
+  border-radius: 4px;
+  padding: 7px;
+  background: #fdfefb;
+  color: #5b7140;
+  font-size: 10px;
+}
+.tempo-save {
+  width: 29px;
+  height: 29px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border-radius: 4px;
+  background: #eaf1d8;
+  color: #6b873a;
+}
+.manual-tempo-form .icon-button {
+  width: 26px;
+  height: 29px;
+  color: #9aa98a;
+}
+.reference-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #7f9068;
+  font-size: 8px;
+  margin: 12px 0 7px;
+}
+.reference-heading > span {
+  color: #a9b49a;
+  font-size: 7px;
+}
+.cadence-references {
+  display: flex;
+  gap: 5px;
+}
+.cadence-references > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px;
+  background: #f7f9f1;
+  border: 1px solid #e6ebdc;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #a0ad8c;
+}
+.cadence-references > label.selected {
+  background: #f0f6df;
+  color: #6d873b;
+  border-color: #c5d69c;
+}
+.cadence-references > label:focus-within {
+  outline: 2px solid #718824;
+  outline-offset: 2px;
+}
+.cadence-references > label:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.cadence-references span {
+  font-size: 7px;
+  white-space: nowrap;
+}
+.cadence-references strong {
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 500;
+}
+.adapt-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px 8px;
+  margin-top: 10px;
+}
+.adapt-controls > span {
+  font-size: 8px;
+  color: #92a07f;
+  flex: 1;
+  min-width: 90px;
+  line-height: 1.7;
+}
+.adapt-controls > span small {
+  display: block;
+  color: #a9b498;
+  font-size: 7px;
+  margin-top: 2px;
+}
+.adapt-button {
+  background: #eaf2d3;
+  color: #627d32;
+  border: 1px solid #d4e2b6;
+  border-radius: 4px;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 8px;
+}
+.adapt-button:hover:not(:disabled) {
+  background: #dfedbb;
+  border-color: #bbd18e;
+}
+.adapt-button > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.adapt-button small {
+  font-family: var(--display);
+  font-size: 13px;
+}
+.adaptation-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  margin-top: 11px;
+  padding-top: 9px;
+  border-top: 1px solid #e9efdb;
+  font-size: 7px;
+  color: #92a07b;
+  line-height: 1.8;
+}
+.adaptation-result button {
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 0;
+  color: #7f9560;
+  font-size: 8px;
+}
+.tempo-error {
+  font-size: 8px;
+  color: #ae7354;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+  margin-top: 8px;
+}
 .remove-track:hover:not(:disabled) {
   color: #b26956;
   background: #fcf0eb;
