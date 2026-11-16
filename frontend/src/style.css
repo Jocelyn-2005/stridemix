@@ -661,6 +661,102 @@ input[type="range"]::-moz-range-thumb {
   padding-top: 12px;
   border-top: 1px solid #edf0e5;
 }
+.gap-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 21px;
+  background: #fafbf6;
+  border-bottom: 1px solid #edf0e5;
+  color: #74835f;
+  font-size: 10px;
+}
+.gap-control > span:first-child {
+  flex: 1;
+}
+.gap-control small {
+  display: block;
+  margin-top: 4px;
+  font-size: 8px;
+  color: #97a184;
+}
+.gap-control input,
+.phase-input {
+  border: 1px solid #e1e7d5;
+  border-radius: 5px;
+  background: #fff;
+}
+.gap-control input {
+  width: 58px;
+  padding: 7px;
+  font: inherit;
+  color: #536b35;
+}
+.track-phase {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #edf0e5;
+}
+.phase-status,
+.phase-hint {
+  font-size: 8px;
+  line-height: 1.7;
+  color: #8b9b75;
+}
+.phase-status.uncertain {
+  color: #a3966d;
+}
+.phase-status > span {
+  display: block;
+  color: #a3966d;
+}
+.phase-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+  color: #71865a;
+  font-size: 8px;
+}
+.phase-controls label {
+  margin-right: 3px;
+}
+.phase-controls button {
+  min-height: 28px;
+  padding: 5px 7px;
+  border-radius: 4px;
+  background: #f1f5e8;
+  color: #6f8453;
+  font: inherit;
+}
+.phase-controls button:hover:not(:disabled) {
+  background: #e6eed8;
+}
+.phase-input {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  overflow: hidden;
+}
+.phase-input input {
+  min-width: 0;
+  width: 65px;
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  color: #536b35;
+  font: inherit;
+  font-size: 10px;
+}
+.phase-input span {
+  padding-right: 5px;
+  color: #9aa68b;
+}
+.phase-hint {
+  margin-top: 5px;
+  color: #a1ad8e;
+}
 .tempo-heading {
   display: flex;
   justify-content: space-between;

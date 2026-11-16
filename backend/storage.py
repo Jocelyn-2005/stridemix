@@ -5,8 +5,9 @@ import threading
 import uuid
 from pathlib import Path
 
+from backend.alignment import analyze_alignment
 from backend.audio import SAMPLE_RATE, AudioError, audio_frame_count, normalize_audio, waveform_peaks
-from backend.models import Adaptation, Tempo, Track
+from backend.models import Adaptation, Alignment, Tempo, Track
 from backend.tempo import analyze_tempo, cadence_references, change_tempo
 
 ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
@@ -83,28 +84,47 @@ class MediaLibrary:
         adaptation: Adaptation | None = None,
     ) -> Track:
         audio_path = self.track_path(track_id)
+        alignment = analyze_alignment(audio_path, tempo.bpm)
+        tempo = self._refine_tempo(tempo, alignment)
         track = Track(
             id=track_id, title=title.strip()[:300] or "未命名音乐",
             duration=audio_frame_count(audio_path) / SAMPLE_RATE,
             source=source, preview_url=f"/api/media/{track_id}",
-            waveform=waveform_peaks(audio_path), tempo=tempo, adaptation=adaptation,
+            waveform=waveform_peaks(audio_path), tempo=tempo, adaptation=adaptation, alignment=alignment,
         )
         return self._save(track)
 
+    @staticmethod
+    def _refine_tempo(tempo: Tempo, alignment: Alignment, include_adapted: bool = False) -> Tempo:
+        # Sparse percussion can leave phase uncertain while its period still
+        # supports a small precision correction. Keep both confidence labels.
+        if (
+            (tempo.source == "analysis" or (include_adapted and tempo.source == "adapted"))
+            and tempo.bpm is not None and alignment.bpm is not None and alignment.anchor_seconds is not None
+            and alignment.confidence >= 0.1 and alignment.drift_ms is not None and alignment.drift_ms <= 20
+            and abs(alignment.bpm / tempo.bpm - 1) <= 0.002
+        ):
+            return tempo.model_copy(update={"bpm": alignment.bpm})
+        return tempo
+
     def analyze(self, track_id: str) -> Track:
         current = self.get(track_id)
-        if current.tempo.status != "pending":
+        if current.tempo.status != "pending" and current.alignment.status != "pending":
             return current
         with PROCESSING_LIMIT:
             current = self.get(track_id)
-            if current.tempo.status != "pending":
+            if current.tempo.status != "pending" and current.alignment.status != "pending":
                 return current
-            result = analyze_tempo(self.track_path(track_id))
+            snapshot = current
+            path = self.track_path(track_id)
+            tempo = analyze_tempo(path) if snapshot.tempo.status == "pending" else snapshot.tempo
+            alignment = analyze_alignment(path, tempo.bpm)
+            tempo = self._refine_tempo(tempo, alignment)
             with self.metadata_lock:
                 current = self.get(track_id)
                 # A manual correction made while analysis runs takes precedence.
-                if current.tempo.status == "pending":
-                    current = current.model_copy(update={"tempo": result})
+                if current.tempo == snapshot.tempo and current.alignment == snapshot.alignment:
+                    current = current.model_copy(update={"tempo": tempo, "alignment": alignment})
                     self._save(current)
                 return current
 
@@ -112,17 +132,28 @@ class MediaLibrary:
         with self.metadata_lock:
             current = self.get(track_id)
             tempo = Tempo(bpm=bpm, confidence=1, status="detected", source="manual")
-            return self._save(current.model_copy(update={"tempo": tempo}))
+            self._save(current.model_copy(update={"tempo": tempo, "alignment": Alignment()}))
+        with PROCESSING_LIMIT:
+            alignment = analyze_alignment(self.track_path(track_id), bpm)
+        with self.metadata_lock:
+            current = self.get(track_id)
+            if current.tempo == tempo:
+                current = self._save(current.model_copy(update={"alignment": alignment}))
+            return current
 
     def adapt(self, track_id: str, cadence: float, reference_cadence: float) -> Track:
+        requested = self.get(track_id)
         current = self.analyze(track_id)
         if current.tempo.bpm is None:
             raise AudioError("无法可靠估算此音乐的节奏，请先手动输入 BPM")
-        candidates = cadence_references(current.tempo.bpm)
+        reference_bpm = requested.tempo.bpm or current.tempo.bpm
+        candidates = cadence_references(reference_bpm)
         reference = min(candidates, key=lambda value: abs(value - reference_cadence))
         if abs(reference - reference_cadence) > 0.11:
             raise AudioError("参考步频必须对应当前 BPM 的半拍、原拍或双拍")
-        local_speed = cadence / reference
+        multiplier = reference / reference_bpm
+        measured_tempo = self._refine_tempo(current.tempo, current.alignment, include_adapted=True)
+        local_speed = cadence / (measured_tempo.bpm * multiplier)
         original_id = current.adaptation.original_id if current.adaptation else current.id
         previous_speed = current.adaptation.speed if current.adaptation else 1
         total_speed = previous_speed * local_speed
@@ -136,7 +167,7 @@ class MediaLibrary:
                 # already processed file a second time.
                 change_tempo(original_audio, directory / "audio.wav", total_speed)
                 adapted_tempo = Tempo(
-                    bpm=round(current.tempo.bpm * local_speed, 4),
+                    bpm=round(measured_tempo.bpm * local_speed, 4),
                     confidence=current.tempo.confidence,
                     status=current.tempo.status, source="adapted",
                 )

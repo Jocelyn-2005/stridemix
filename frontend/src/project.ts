@@ -6,22 +6,35 @@ export const DEFAULT_SETTINGS: MixSettings = {
   tone: "click",
   bgmVolume: 0.65,
   beatVolume: 0.55,
+  gapSeconds: 2,
 };
 
 export interface PlaylistEntry {
   entryId: string;
   track: Track;
+  phaseOffsetMs: number;
 }
 
 export interface SavedProject {
   trackIds: string[];
   entryIds: string[];
+  phaseOffsetsMs: number[];
   settings: MixSettings;
   format: "mp3" | "wav";
 }
 
 export function createEntry(track: Track): PlaylistEntry {
-  return { entryId: crypto.randomUUID(), track };
+  return { entryId: crypto.randomUUID(), track, phaseOffsetMs: 0 };
+}
+
+export function toggleHalfBeatOffset(offsetMs: number, cadence: number) {
+  const periodMs = 60000 / cadence;
+  const halfBeat = periodMs / 2;
+  const phase = ((offsetMs % periodMs) + periodMs) % periodMs;
+  let next = offsetMs + (phase < halfBeat - 1e-7 ? halfBeat : -halfBeat);
+  if (next > 1000) next -= periodMs;
+  if (next < -1000) next += periodMs;
+  return Math.abs(next) < 1e-7 ? 0 : next;
 }
 
 export function parseProject(raw: string | null): SavedProject | null {
@@ -40,6 +53,7 @@ export function parseProject(raw: string | null): SavedProject | null {
         : fallback;
     const trackIds: string[] = [];
     const entryIds: string[] = [];
+    const phaseOffsetsMs: number[] = [];
     const seen = new Set<string>();
     for (const [index, trackId] of value.trackIds.entries()) {
       if (typeof trackId !== "string") continue;
@@ -55,10 +69,14 @@ export function parseProject(raw: string | null): SavedProject | null {
       seen.add(entryId);
       trackIds.push(trackId);
       entryIds.push(entryId);
+      phaseOffsetsMs.push(
+        clamp(value.phaseOffsetsMs?.[index], -1000, 1000, 0),
+      );
     }
     return {
       trackIds,
       entryIds,
+      phaseOffsetsMs,
       settings: {
         cadence: Math.round(
           clamp(settings.cadence, 60, 240, DEFAULT_SETTINGS.cadence),
@@ -75,6 +93,7 @@ export function parseProject(raw: string | null): SavedProject | null {
           1,
           DEFAULT_SETTINGS.beatVolume,
         ),
+        gapSeconds: clamp(settings.gapSeconds, 0, 30, DEFAULT_SETTINGS.gapSeconds),
       },
       format: value.format === "wav" ? "wav" : "mp3",
     };
@@ -90,7 +109,13 @@ export function restoreEntries(
   const byId = new Map(library.map((track) => [track.id, track]));
   return project.trackIds.flatMap((trackId, index) => {
     const track = byId.get(trackId);
-    return track ? [{ entryId: project.entryIds[index], track }] : [];
+    return track
+      ? [{
+          entryId: project.entryIds[index],
+          track,
+          phaseOffsetMs: project.phaseOffsetsMs[index],
+        }]
+      : [];
   });
 }
 

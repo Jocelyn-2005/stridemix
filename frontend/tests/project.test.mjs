@@ -5,6 +5,7 @@ import {
   restoreEntries,
   replaceEntryTrack,
   updateSharedTrack,
+  toggleHalfBeatOffset,
 } from "../src/project.ts";
 
 const track = (id, duration = 10) => ({
@@ -16,9 +17,26 @@ const track = (id, duration = 10) => ({
   waveform: [],
 });
 
+test("half beat toggles preserve fine adjustment and stay inside offset limits", () => {
+  for (const cadence of [60, 165, 240]) {
+    for (const offset of [-1000, -990, -80, 0, 80, 990, 1000]) {
+      const toggled = toggleHalfBeatOffset(offset, cadence);
+      assert.ok(toggled >= -1000 && toggled <= 1000);
+      const restored = toggleHalfBeatOffset(toggled, cadence);
+      const period = 60000 / cadence;
+      const phaseDifference = (restored - offset) / period;
+      assert.ok(Math.abs(phaseDifference - Math.round(phaseDifference)) < 1e-8);
+    }
+  }
+  assert.ok(Math.abs(toggleHalfBeatOffset(0, 165) - 60000 / 165 / 2) < 1e-8);
+  assert.ok(Math.abs(toggleHalfBeatOffset(toggleHalfBeatOffset(80, 165), 165) - 80) < 1e-8);
+});
+
 test("legacy projects get separate stable instances for repeated material", () => {
   const project = parseProject(JSON.stringify({ trackIds: ["same", "same"] }));
   assert.equal(new Set(project.entryIds).size, 2);
+  assert.deepEqual(project.phaseOffsetsMs, [0, 0]);
+  assert.equal(project.settings.gapSeconds, 2);
   const entries = restoreEntries(project, [track("same")]);
   assert.deepEqual(
     entries.map((entry) => entry.track.id),
@@ -68,10 +86,42 @@ test("bad data is filtered while preserving entry alignment and setting defaults
     tone: "click",
     bgmVolume: 0,
     beatVolume: 0.55,
+    gapSeconds: 2,
   });
   assert.equal(project.format, "mp3");
   assert.equal(parseProject("broken json"), null);
   assert.equal(parseProject("{}"), null);
+});
+
+test("phase offsets stay paired with duplicate entries through restore and filtering", () => {
+  const project = parseProject(
+    JSON.stringify({
+      trackIds: ["same", 7, "missing", "same"],
+      entryIds: ["first", "invalid", "missing", "second"],
+      phaseOffsetsMs: [-80, 150, 20, 181.818],
+      settings: { gapSeconds: 0.75 },
+    }),
+  );
+  assert.deepEqual(project.phaseOffsetsMs, [-80, 20, 181.818]);
+  assert.equal(project.settings.gapSeconds, 0.75);
+  const restored = restoreEntries(project, [track("same")]);
+  assert.deepEqual(restored.map((entry) => entry.phaseOffsetMs), [-80, 181.818]);
+  assert.deepEqual(restored.map((entry) => entry.entryId), ["first", "second"]);
+  const adapted = replaceEntryTrack(restored, "second", "same", track("adapted"));
+  assert.equal(adapted[1].phaseOffsetMs, 181.818);
+});
+
+test("invalid phase offsets and gap values use bounded defaults", () => {
+  const project = parseProject(
+    JSON.stringify({
+      trackIds: ["first", "second", "third", "fourth"],
+      phaseOffsetsMs: [-2000, 2000, "bad"],
+      settings: { gapSeconds: 100 },
+    }),
+  );
+  assert.deepEqual(project.phaseOffsetsMs, [-1000, 1000, 0, 0]);
+  assert.equal(project.settings.gapSeconds, 30);
+  assert.equal(parseProject(JSON.stringify({ trackIds: [], settings: { gapSeconds: -1 } })).settings.gapSeconds, 0);
 });
 
 test("adapt completion after reorder replaces only the chosen instance", () => {

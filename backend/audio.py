@@ -140,10 +140,12 @@ def write_tone(path: Path, tone: str) -> None:
         stream.writeframes((tone_samples(tone) * 32767).astype("<i2").tobytes())
 
 
-def beat_positions(frame_count: int, cadence: float) -> Iterator[int]:
+def beat_positions(frame_count: int, cadence: float, phase_seconds: float = 0) -> Iterator[int]:
+    period = 60 / cadence
+    phase = phase_seconds % period
     index = 0
     while True:
-        position = round(index * SAMPLE_RATE * 60 / cadence)
+        position = round((phase + index * period) * SAMPLE_RATE)
         if position >= frame_count:
             return
         yield position
@@ -157,6 +159,8 @@ def render_metronome(
     tone: str,
     cancelled: threading.Event,
     progress: Callable[[float], None] | None = None,
+    *,
+    segments: list[tuple[int, int, float]] | None = None,
 ) -> None:
     samples = (tone_samples(tone) * 32767).astype("<i2").tobytes()
     tone_frames = len(samples) // 2
@@ -166,24 +170,46 @@ def render_metronome(
         stream.setnchannels(1)
         stream.setsampwidth(2)
         stream.setframerate(SAMPLE_RATE)
-        for beat_index, position in enumerate(beat_positions(frame_count, cadence)):
-            if cancelled.is_set():
-                raise ExportCancelled()
-            gap = position - cursor
-            while gap > 0:
-                length = min(gap, SAMPLE_RATE)
-                stream.writeframesraw(silence[:length * 2])
-                gap -= length
-            length = min(tone_frames, frame_count - position)
-            stream.writeframesraw(samples[:length * 2])
-            cursor = position + length
-            if progress and beat_index % 50 == 0:
-                progress(cursor / frame_count)
+        beat_index = 0
+        intervals = segments if segments is not None else [(0, frame_count, 0)]
+        for start, end, phase in intervals:
+            for local_position in beat_positions(end - start, cadence, phase):
+                if cancelled.is_set():
+                    raise ExportCancelled()
+                position = start + local_position
+                gap = position - cursor
+                while gap > 0:
+                    length = min(gap, SAMPLE_RATE)
+                    stream.writeframesraw(silence[:length * 2])
+                    gap -= length
+                length = min(tone_frames, end - position)
+                stream.writeframesraw(samples[:length * 2])
+                cursor = position + length
+                if progress and beat_index % 50 == 0:
+                    progress(cursor / frame_count)
+                beat_index += 1
         remainder = frame_count - cursor
         while remainder > 0:
+            if cancelled.is_set():
+                raise ExportCancelled()
             length = min(remainder, SAMPLE_RATE)
             stream.writeframesraw(silence[:length * 2])
             remainder -= length
+
+
+def write_silence(path: Path, frame_count: int, cancelled: threading.Event) -> None:
+    block = bytes(SAMPLE_RATE * 4)
+    with wave.open(str(path), "wb") as stream:
+        stream.setnchannels(2)
+        stream.setsampwidth(2)
+        stream.setframerate(SAMPLE_RATE)
+        remaining = frame_count
+        while remaining > 0:
+            if cancelled.is_set():
+                raise ExportCancelled()
+            count = min(remaining, SAMPLE_RATE)
+            stream.writeframesraw(block[:count * 4])
+            remaining -= count
 
 
 def mix_audio(
@@ -198,7 +224,7 @@ def mix_audio(
 ) -> None:
     filters = (
         f"[0:a]volume={bgm_volume}[bgm];"
-        f"[1:a]volume={beat_volume}[beat];"
+        f"[1:a]pan=stereo|c0=c0|c1=c0,volume={beat_volume}[beat];"
         "[bgm][beat]amix=inputs=2:duration=first:normalize=0,"
         f"alimiter=limit=0.95:level=false:latency=true,atrim=end_sample={frame_count}[out]"
     )

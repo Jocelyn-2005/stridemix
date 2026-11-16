@@ -21,6 +21,16 @@ class Adaptation(BaseModel):
     target_cadence: float = Field(ge=60, le=240)
 
 
+class Alignment(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    anchor_seconds: float | None = Field(default=None, ge=0)
+    bpm: float | None = Field(default=None, ge=30, le=480)
+    confidence: float = Field(default=0, ge=0, le=1)
+    drift_ms: float | None = Field(default=None, ge=0)
+    status: Literal["pending", "detected", "uncertain", "unavailable"] = "pending"
+
+
 class Track(BaseModel):
     id: str
     title: str
@@ -30,6 +40,7 @@ class Track(BaseModel):
     waveform: list[float]
     tempo: Tempo = Field(default_factory=Tempo)
     adaptation: Adaptation | None = None
+    alignment: Alignment = Field(default_factory=Alignment)
 
 
 class ManualTempoRequest(BaseModel):
@@ -75,7 +86,10 @@ class GenerationRequest(BaseModel):
 
 
 class TrackReference(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    phase_offset_ms: float = Field(default=0, ge=-1000, le=1000)
 
 
 class ExportRequest(BaseModel):
@@ -87,6 +101,7 @@ class ExportRequest(BaseModel):
     bgm_volume: float = Field(default=0.65, ge=0, le=1)
     beat_volume: float = Field(default=0.55, ge=0, le=1)
     format: Literal["mp3", "wav"] = "mp3"
+    gap_seconds: float = Field(default=2, ge=0, le=30)
 
 
 class Job(BaseModel):

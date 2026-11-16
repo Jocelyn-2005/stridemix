@@ -1,15 +1,17 @@
 """Local HTTP API and production frontend for StrideMix."""
 
+import io
 import os
 import tempfile
+import wave
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from backend.audio import TONES, AudioError, ffmpeg_executable, write_tone
@@ -140,6 +142,30 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="素材不存在，请重新导入") from exc
         return FileResponse(path, media_type="audio/wav")
+
+    @application.get("/api/media/{track_id}/chunk")
+    def media_chunk(
+        track_id: str,
+        start_frame: int = Query(default=0, ge=0),
+        frame_count: int = Query(default=220500, ge=1, le=441000),
+    ):
+        try:
+            path = library.track_path(track_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="素材不存在，请重新导入") from exc
+        with wave.open(str(path), "rb") as stream:
+            if start_frame >= stream.getnframes():
+                raise HTTPException(status_code=416, detail="请求片段超出音频长度")
+            stream.setpos(start_frame)
+            samples = stream.readframes(frame_count)
+            channels, sample_width, sample_rate = stream.getnchannels(), stream.getsampwidth(), stream.getframerate()
+        output = io.BytesIO()
+        with wave.open(output, "wb") as stream:
+            stream.setnchannels(channels)
+            stream.setsampwidth(sample_width)
+            stream.setframerate(sample_rate)
+            stream.writeframes(samples)
+        return Response(output.getvalue(), media_type="audio/wav")
 
     @application.post("/api/exports")
     def start_export(request: ExportRequest):

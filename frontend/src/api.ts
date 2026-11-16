@@ -7,6 +7,15 @@ export interface Track {
   waveform: number[];
   tempo?: TrackTempo;
   adaptation?: TrackAdaptation | null;
+  alignment?: TrackAlignment;
+}
+
+export interface TrackAlignment {
+  anchor_seconds: number | null;
+  bpm: number | null;
+  confidence: number;
+  drift_ms: number | null;
+  status: "pending" | "detected" | "uncertain" | "unavailable";
 }
 
 export interface TrackTempo {
@@ -48,6 +57,19 @@ export interface ExportJob {
   progress: number;
   error: string | null;
   download_url: string | null;
+}
+
+const analyses = new Map<string, Promise<Track>>();
+
+export function analyzeTrack(id: string) {
+  const existing = analyses.get(id);
+  if (existing) return existing;
+  const pending = request<Track>(
+    `/api/tracks/${encodeURIComponent(id)}/analyze`,
+    { method: "POST" },
+  ).finally(() => analyses.delete(id));
+  analyses.set(id, pending);
+  return pending;
 }
 
 export async function request<T>(

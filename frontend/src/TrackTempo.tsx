@@ -9,7 +9,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { request } from "./api";
+import { analyzeTrack, request } from "./api";
 import type { Track } from "./api";
 import {
   cadenceReferences,
@@ -17,21 +17,6 @@ import {
   formatTempo,
 } from "./tempo";
 import { formatTime } from "./timeline";
-
-const analyses = new Map<string, Promise<Track>>();
-
-function analyzeTrack(id: string) {
-  const existing = analyses.get(id);
-  if (existing) return existing;
-  const pending = request<Track>(
-    `/api/tracks/${encodeURIComponent(id)}/analyze`,
-    {
-      method: "POST",
-    },
-  ).finally(() => analyses.delete(id));
-  analyses.set(id, pending);
-  return pending;
-}
 
 interface TrackTempoProps {
   track: Track;
@@ -59,6 +44,7 @@ export default function TrackTempo({
   );
   const tempo = track.tempo;
   const status = tempo?.status ?? "pending";
+  const alignmentStatus = track.alignment?.status ?? "pending";
   const bpm = tempo?.bpm ?? null;
   const references = cadenceReferences(bpm);
   const reference =
@@ -75,7 +61,7 @@ export default function TrackTempo({
   }, [track.id, bpm]);
 
   useEffect(() => {
-    if (status !== "pending") return;
+    if (status !== "pending" && alignmentStatus !== "pending") return;
     let active = true;
     setOperation("analyzing");
     analyzeTrack(track.id)
@@ -94,7 +80,7 @@ export default function TrackTempo({
     return () => {
       active = false;
     };
-  }, [track.id, status, onTrackUpdate]);
+  }, [track.id, status, alignmentStatus, onTrackUpdate]);
 
   async function retryAnalysis() {
     setError("");

@@ -30,11 +30,17 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { request } from "./api";
+import { analyzeTrack, request } from "./api";
 import type { ExportJob, Health, SearchResult, Tone, Track } from "./api";
 import { PreviewEngine } from "./audio";
 import type { MixSettings, PlaybackState } from "./audio";
-import { formatTime } from "./timeline";
+import {
+  buildTimeline,
+  countTrackBeats,
+  formatTime,
+  SAMPLE_RATE,
+} from "./timeline";
+import { chooseCadenceReference } from "./tempo";
 import TrackTempo from "./TrackTempo";
 import {
   createEntry,
@@ -43,6 +49,7 @@ import {
   replaceEntryTrack,
   restoreEntries,
   updateSharedTrack,
+  toggleHalfBeatOffset,
 } from "./project";
 import type { PlaylistEntry } from "./project";
 
@@ -140,6 +147,116 @@ function VolumeControl({
   );
 }
 
+function TrackPhase({
+  track,
+  entryId,
+  offsetMs,
+  cadence,
+  onChange,
+}: {
+  track: Track;
+  entryId: string;
+  offsetMs: number;
+  cadence: number;
+  onChange: (offset: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(Number(offsetMs.toFixed(2))));
+  useEffect(() => {
+    setDraft(String(Number(offsetMs.toFixed(2))));
+  }, [offsetMs]);
+
+  function commit() {
+    const value = Number(draft);
+    if (!draft.trim() || !Number.isFinite(value)) {
+      setDraft(String(Number(offsetMs.toFixed(2))));
+      return;
+    }
+    const bounded = Math.max(-1000, Math.min(1000, value));
+    onChange(bounded);
+    setDraft(String(Number(bounded.toFixed(2))));
+  }
+
+  const alignment = track.alignment;
+  const reference = chooseCadenceReference(
+    track.tempo?.bpm ?? alignment?.bpm ?? null,
+    cadence,
+  );
+  const needsAdaptation =
+    reference && Math.abs(reference.cadence - cadence) > 0.2;
+  const uncertain =
+    alignment?.status !== "detected" || alignment.confidence < 0.45;
+  let alignmentLabel = "起拍分析中";
+  if (alignment && alignment.status !== "pending") {
+    alignmentLabel = alignment.anchor_seconds === null
+      ? "起拍未确定，可按听感微调"
+      : `起拍参考 ${Math.round(alignment.confidence * 100)}%`;
+  }
+
+  return (
+    <div className="track-phase">
+      <p className={`phase-status ${uncertain ? "uncertain" : ""}`}>
+        {alignmentLabel}
+        {alignment?.anchor_seconds != null && uncertain && " · 判断较弱"}
+        {alignment?.drift_ms != null && ` · 漂移约 ${Math.round(alignment.drift_ms)} ms`}
+        {needsAdaptation && <span>待适配 · 音乐速度与步频不同</span>}
+      </p>
+      <div className="phase-controls">
+        <label htmlFor={`phase-${entryId}`}>起拍微调</label>
+        <button
+          type="button"
+          onClick={() => onChange(Math.max(-1000, offsetMs - 10))}
+          disabled={offsetMs <= -1000}
+          aria-label={`提前${track.title}的节拍10毫秒`}
+        >
+          −10
+        </button>
+        <div className="phase-input">
+          <input
+            id={`phase-${entryId}`}
+            type="number"
+            min="-1000"
+            max="1000"
+            step="any"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={commit}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                commit();
+                event.currentTarget.blur();
+              }
+            }}
+            aria-label={`${track.title}的起拍偏移毫秒`}
+          />
+          <span>ms</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => onChange(Math.min(1000, offsetMs + 10))}
+          disabled={offsetMs >= 1000}
+          aria-label={`延后${track.title}的节拍10毫秒`}
+        >
+          +10
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(toggleHalfBeatOffset(offsetMs, cadence))}
+        >
+          切换半拍
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(0)}
+          disabled={offsetMs === 0}
+        >
+          恢复自动
+        </button>
+      </div>
+      <p className="phase-hint">正值延后节拍，负值提前。</p>
+    </div>
+  );
+}
+
 export default function App() {
   const [saved] = useState(readProject);
   const [settings, setSettings] = useState<MixSettings>(
@@ -147,6 +264,9 @@ export default function App() {
   );
   const [cadenceDraft, setCadenceDraft] = useState(
     String(saved?.settings.cadence ?? 165),
+  );
+  const [gapDraft, setGapDraft] = useState(
+    String(saved?.settings.gapSeconds ?? DEFAULT_SETTINGS.gapSeconds),
   );
   const [entries, setEntries] = useState<PlaylistEntry[]>([]);
   const tracks = useMemo(() => entries.map((entry) => entry.track), [entries]);
@@ -182,8 +302,14 @@ export default function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const engine = useRef<PreviewEngine | null>(null);
   const playOperation = useRef(0);
+  const previousGap = useRef(settings.gapSeconds);
+  const latestEntries = useRef(entries);
   const importRef = useRef<HTMLElement>(null);
-  const totalDuration = tracks.reduce((sum, track) => sum + track.duration, 0);
+  const timeline = useMemo(
+    () => buildTimeline(tracks, settings.gapSeconds),
+    [tracks, settings.gapSeconds],
+  );
+  const totalDuration = timeline.durationFrames / SAMPLE_RATE;
   const exportActive = job?.status === "processing" || job?.status === "queued";
   const selectedTone = tones.find((tone) => tone.id === settings.tone);
 
@@ -217,17 +343,30 @@ export default function App() {
   }, [saved]);
 
   useEffect(() => {
-    if (engine.current?.setTracks(tracks)) {
+    latestEntries.current = entries;
+    const arrangementChanged = engine.current?.setTracks(
+      tracks,
+      entries.map((entry) => entry.phaseOffsetMs),
+    );
+    if (arrangementChanged) {
       playOperation.current += 1;
       setPlayPending(false);
     }
-  }, [tracks]);
+  }, [tracks, entries]);
   useEffect(() => {
+    if (previousGap.current !== settings.gapSeconds) {
+      previousGap.current = settings.gapSeconds;
+      playOperation.current += 1;
+      setPlayPending(false);
+    }
     engine.current?.update(settings);
   }, [settings]);
   useEffect(() => {
     setCadenceDraft(String(settings.cadence));
   }, [settings.cadence]);
+  useEffect(() => {
+    setGapDraft(String(settings.gapSeconds));
+  }, [settings.gapSeconds]);
 
   useEffect(() => {
     if (!ready) return;
@@ -237,6 +376,7 @@ export default function App() {
         JSON.stringify({
           trackIds: tracks.map((track) => track.id),
           entryIds: entries.map((entry) => entry.entryId),
+          phaseOffsetsMs: entries.map((entry) => entry.phaseOffsetMs),
           settings,
           format,
         }),
@@ -300,6 +440,17 @@ export default function App() {
     const cadence = Math.max(60, Math.min(240, Math.round(value)));
     changeSetting("cadence", cadence);
     setCadenceDraft(String(cadence));
+  }
+
+  function commitGap() {
+    const value = Number(gapDraft);
+    if (!gapDraft.trim() || !Number.isFinite(value)) {
+      setGapDraft(String(settings.gapSeconds));
+      return;
+    }
+    const gapSeconds = Math.max(0, Math.min(30, value));
+    changeSetting("gapSeconds", gapSeconds);
+    setGapDraft(String(gapSeconds));
   }
 
   async function runImport(label: string, action: () => Promise<void>) {
@@ -384,6 +535,26 @@ export default function App() {
     setPlayPending(true);
     const operation = ++playOperation.current;
     try {
+      const missingAlignment = tracks.filter(
+        (track) => !track.alignment || track.alignment.status === "pending",
+      );
+      const pending = [
+        ...new Map(missingAlignment.map((track) => [track.id, track])).values(),
+      ];
+      const results = await Promise.all(
+        pending.map((track) => analyzeTrack(track.id).catch(() => null)),
+      );
+      if (operation !== playOperation.current) return;
+      const analyzed = results.filter((track) => track !== null);
+      if (analyzed.length) {
+        const byId = new Map(analyzed.map((track) => [track.id, track]));
+        setEntries((current) => analyzed.reduce(updateSharedTrack, current));
+        const currentEntries = latestEntries.current;
+        engine.current?.setTracks(
+          currentEntries.map((entry) => byId.get(entry.track.id) ?? entry.track),
+          currentEntries.map((entry) => entry.phaseOffsetMs),
+        );
+      }
       await engine.current?.play();
     } catch (reason) {
       if (operation === playOperation.current) {
@@ -405,7 +576,17 @@ export default function App() {
     }
   }
 
+  function seekPlayback(position: number) {
+    playOperation.current += 1;
+    setPlayPending(false);
+    void engine.current
+      ?.seek(position)
+      .catch((reason: Error) => setError(reason.message));
+  }
+
   function moveTrack(index: number, direction: number) {
+    playOperation.current += 1;
+    setPlayPending(false);
     setEntries((current) => {
       const next = [...current];
       const destination = index + direction;
@@ -414,16 +595,26 @@ export default function App() {
     });
   }
 
+  function removeTrack(entryId: string) {
+    playOperation.current += 1;
+    setPlayPending(false);
+    setEntries((current) => current.filter((entry) => entry.entryId !== entryId));
+  }
+
   async function startExport() {
     if (!tracks.length || exportActive || exportStarting) return;
     setError("");
     setExportStarting(true);
     const parameters = {
-      tracks: tracks.map((track) => ({ id: track.id })),
+      tracks: entries.map((entry) => ({
+        id: entry.track.id,
+        phase_offset_ms: entry.phaseOffsetMs,
+      })),
       cadence: settings.cadence,
       tone: settings.tone,
       bgm_volume: settings.bgmVolume,
       beat_volume: settings.beatVolume,
+      gap_seconds: settings.gapSeconds,
       format,
     };
     const snapshot: ExportSnapshot = {
@@ -467,11 +658,15 @@ export default function App() {
     void uploadFiles(event.dataTransfer.files);
   }
 
-  const beatCount = Math.max(
+  const beatCount = timeline.tracks.reduce(
+    (total, section) => total + countTrackBeats(
+      section.durationFrames,
+      settings.cadence,
+      tracks[section.index].alignment?.anchor_seconds,
+      entries[section.index].phaseOffsetMs,
+    ),
     0,
-    Math.ceil((totalDuration * settings.cadence) / 60 - 1e-8),
   );
-  let trackStart = 0;
 
   return (
     <div className="app-shell">
@@ -656,7 +851,7 @@ export default function App() {
             </div>
             <div className="cadence-footnote">
               <Headphones size={15} />
-              <span>一步一响，节拍贯穿整段配乐。</span>
+              <span>一步一响，每曲按起拍独立对齐。</span>
             </div>
           </aside>
 
@@ -689,6 +884,29 @@ export default function App() {
               <span>音乐按顺序播放</span>
               <span>时长</span>
             </div>
+            <label className="gap-control" htmlFor="track-gap">
+              <span>
+                曲间间隙
+                <small>间隙内音乐与节拍静音</small>
+              </span>
+              <input
+                id="track-gap"
+                type="number"
+                min="0"
+                max="30"
+                step="any"
+                value={gapDraft}
+                onChange={(event) => setGapDraft(event.target.value)}
+                onBlur={commitGap}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    commitGap();
+                    event.currentTarget.blur();
+                  }
+                }}
+              />
+              <span>秒</span>
+            </label>
             <div className="track-list">
               {!tracks.length && (
                 <div className="empty-playlist">
@@ -704,9 +922,8 @@ export default function App() {
                   <p>添加音乐后，试听完整的配乐与步频。</p>
                 </div>
               )}
-              {entries.map(({ entryId, track }, index) => {
-                const start = trackStart;
-                trackStart += track.duration;
+              {entries.map(({ entryId, track, phaseOffsetMs }, index) => {
+                const start = timeline.tracks[index].startFrame / SAMPLE_RATE;
                 return (
                   <article
                     className={`track-row ${playback.playing && playback.activeIndex === index ? "is-playing" : ""}`}
@@ -715,11 +932,7 @@ export default function App() {
                   >
                     <button
                       className="track-number"
-                      onClick={() => {
-                        void engine.current
-                          ?.seek(start)
-                          .catch((reason: Error) => setError(reason.message));
-                      }}
+                      onClick={() => seekPlayback(start)}
                       aria-label={`跳转到${track.title}`}
                     >
                       {playback.playing && playback.activeIndex === index ? (
@@ -759,6 +972,19 @@ export default function App() {
                           )
                         }
                       />
+                      <TrackPhase
+                        track={track}
+                        entryId={entryId}
+                        offsetMs={phaseOffsetMs}
+                        cadence={settings.cadence}
+                        onChange={(offset) =>
+                          setEntries((current) => current.map((entry) =>
+                            entry.entryId === entryId
+                              ? { ...entry, phaseOffsetMs: offset }
+                              : entry,
+                          ))
+                        }
+                      />
                     </div>
                     <div className="track-actions">
                       <button
@@ -779,13 +1005,7 @@ export default function App() {
                       </button>
                       <button
                         className="icon-button remove-track"
-                        onClick={() =>
-                          setEntries((current) =>
-                            current.filter(
-                              (entry) => entry.entryId !== entryId,
-                            ),
-                          )
-                        }
+                        onClick={() => removeTrack(entryId)}
                         aria-label={`移除${track.title}`}
                       >
                         <Trash2 size={14} />
@@ -1174,11 +1394,7 @@ export default function App() {
         <div className="transport-controls">
           <button
             className="icon-button reset-button"
-            onClick={() => {
-              void engine.current
-                ?.seek(0)
-                .catch((reason: Error) => setError(reason.message));
-            }}
+            onClick={() => seekPlayback(0)}
             disabled={!ready}
             aria-label="回到开头"
           >
@@ -1206,7 +1422,9 @@ export default function App() {
             {playback.activeIndex >= 0
               ? tracks[playback.activeIndex]?.title
               : tracks.length
-                ? "试听完整配乐"
+                ? playback.playing
+                  ? "曲间间隙"
+                  : "试听完整配乐"
                 : "试听步频节拍"}
           </strong>
           <span>
@@ -1225,9 +1443,7 @@ export default function App() {
             value={Math.min(playback.position, totalDuration || 0)}
             disabled={!tracks.length || !ready}
             onChange={(event) => {
-              void engine.current
-                ?.seek(Number(event.target.value))
-                .catch((reason: Error) => setError(reason.message));
+              seekPlayback(Number(event.target.value));
             }}
             style={
               {

@@ -46,6 +46,7 @@ def export(client: TestClient, tracks, **settings):
         "bgm_volume": 0.5,
         "beat_volume": 0,
         "format": "wav",
+        "gap_seconds": 0,
         **settings,
     }
     response = client.post("/api/exports", json=request)
@@ -147,7 +148,7 @@ def test_cancel_export_reaches_terminal_state(client, monkeypatch):
     track = upload(client)
     started = threading.Event()
 
-    def wait_for_cancel(path, frames, cadence, tone, cancelled, progress):
+    def wait_for_cancel(path, frames, cadence, tone, cancelled, progress, **kwargs):
         started.set()
         assert cancelled.wait(5)
         raise ExportCancelled()
