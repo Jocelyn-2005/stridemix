@@ -38,13 +38,15 @@ export function matchRhythm(
   anchor: number | null | undefined,
   offsetMs: number,
 ): RhythmMatch | null {
-  const nodes = window.onsets.filter((node) =>
+  const observed = window.onsets.filter((node) =>
     Number.isFinite(node.time) &&
     Number.isFinite(node.strength) &&
     node.strength > 0 &&
     node.time >= window.start_seconds &&
     node.time < window.start_seconds + window.duration_seconds,
   );
+  const strong = observed.filter((node) => node.strong);
+  const nodes = strong.length >= 4 ? strong : observed;
   if (
     !Number.isFinite(cadence) ||
     cadence <= 0 ||

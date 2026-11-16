@@ -63,6 +63,16 @@ def test_double_time_reference_does_not_double_audio_speed(client):
     assert client.get(original["preview_url"]).status_code == 200
 
 
+def test_slow_music_uses_half_cadence_musical_tempo(client, tmp_path):
+    original = set_bpm(client, import_pulses(client, tmp_path, bpm=40), 40)
+    variant = adapt(client, original, 170, 80)
+    assert variant["adaptation"]["speed"] == pytest.approx(2.125)
+    assert variant["tempo"]["bpm"] == pytest.approx(85, abs=0.01)
+    assert variant["duration"] == pytest.approx(original["duration"] / 2.125, abs=0.08)
+    measured = analyze_tempo(client.app.state.library.track_path(variant["id"]))
+    assert measured.bpm == pytest.approx(85, abs=1)
+
+
 def test_repeated_adaptation_renders_original_and_preserves_pitch(client, monkeypatch):
     original = set_bpm(client, upload(client, duration=8), 120)
     calls = []

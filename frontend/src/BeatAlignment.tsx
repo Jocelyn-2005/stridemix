@@ -547,13 +547,13 @@ export default function BeatAlignment({
               <dd>{evidence === null ? "—" : `${evidence}%`}</dd>
             </div>
             <div>
-              <dt>接近节拍的节点</dt>
+              <dt>接近节拍的参考节点</dt>
               <dd>{match ? `${match.matched} / ${match.total}` : "—"}</dd>
             </div>
           </dl>
           <p>
             {match
-              ? "根据实际节点到节拍落点的时间误差计算，强拍权重更高。"
+              ? "优先参考主节奏的落位，保留切分与装饰鼓点的自然位置。"
               : "当前片段的鼓点证据不足，结合试听判断对齐位置。"}
             {" "}最终以你的试听确认结果为准。
           </p>

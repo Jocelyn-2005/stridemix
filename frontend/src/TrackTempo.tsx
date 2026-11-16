@@ -37,6 +37,8 @@ export default function TrackTempo({
   const legacyManual = tempo?.source === "manual";
   const bpm = legacyManual ? null : tempo?.bpm ?? null;
   const reference = chooseCadenceReference(bpm, cadence);
+  const speed = reference ? cadence / reference.cadence : null;
+  const musicalTarget = bpm !== null && speed !== null ? bpm * speed : null;
   const busy = operation !== null;
 
   let rhythmLabel = operation === "analyzing" ? "正在识别" : "节奏未确定";
@@ -176,8 +178,12 @@ export default function TrackTempo({
       )}
       <div className="auto-rhythm-actions">
         <div>
-          <strong>目标 {cadence} 步／分钟</strong>
-          <span>适配音乐速度时保持音高</span>
+          <strong>节拍器 {cadence} 步／分钟</strong>
+          <span>
+            {musicalTarget !== null && speed !== null && bpm !== null
+              ? `音乐 ${formatTempo(bpm)} → ${formatTempo(musicalTarget)} BPM · ${speed.toFixed(2)}× · 保持音高`
+              : "自动选择合适的音乐拍速关系，保持音高"}
+          </span>
         </div>
         <button
           className="adapt-button"
@@ -196,7 +202,8 @@ export default function TrackTempo({
       {track.adaptation && (
         <div className="adaptation-result">
           <span>
-            已制作 {track.adaptation.target_cadence} 步／分钟适配版 · {formatTime(track.duration)}
+            音乐 {bpm === null ? "—" : formatTempo(bpm)} BPM · 节拍器 {track.adaptation.target_cadence} 步／分钟
+            {" · "}{formatTime(track.duration)}
           </span>
           <button
             onClick={() => void restore()}

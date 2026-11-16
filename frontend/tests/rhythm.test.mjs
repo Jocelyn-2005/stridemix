@@ -22,6 +22,19 @@ test("actual nonzero drum attacks match the shared metronome grid", () => {
   assert.ok(matchRhythm(fixture, cadence, anchor, 40).score < match.score);
 });
 
+test("offbeat ornamentation preserves a matching strong musical pulse", () => {
+  const ornamented = {
+    ...fixture,
+    onsets: fixture.onsets.flatMap(node => [
+      node,
+      { time: node.time + period / 2, strength: 0.9, strong: false },
+    ]),
+  };
+  const match = matchRhythm(ornamented, cadence, anchor, 0);
+  assert.equal(match.score, 100);
+  assert.equal(match.total, fixture.onsets.length);
+});
+
 test("match reference requires sufficient actual evidence", () => {
   assert.equal(matchRhythm({ ...fixture, onsets: [] }, cadence, anchor, 0), null);
   assert.equal(matchRhythm({ ...fixture, reliability: 0.1 }, cadence, anchor, 0), null);
