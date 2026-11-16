@@ -261,7 +261,7 @@ export default function App() {
         if (!active) return;
         setHealth(status);
         setTones(availableTones);
-        setLibraryTracks(library);
+        setLibraryTracks(library.filter((track) => !track.adaptation));
         const restored = saved ? restoreEntries(saved, library) : [];
         setEntries(restored);
         setReady(true);
@@ -330,6 +330,7 @@ export default function App() {
   const handleTrackUpdate = useCallback((updated: Track) => {
     if (deletedTrackIds.current.has(updated.id)) return;
     setEntries((current) => updateSharedTrack(current, updated));
+    if (updated.adaptation) return;
     setLibraryTracks((current) => {
       const exists = current.some((track) => track.id === updated.id);
       return exists
@@ -722,7 +723,7 @@ export default function App() {
     { page: "appearance", icon: Palette },
   ] as const;
   const descriptions: Record<AppRoute["page"], string> = {
-    library: "保存在这台电脑的音乐，随时加入新的编排。",
+    library: "从添加音乐导入的原曲，随时加入新的编排。",
     import: "从文件、链接、歌曲搜索或 AI 配乐开始。导入后自动加入曲库与编排。",
     mix: "调整播放顺序，进入单曲调试，让每一段音乐衔接你的步伐。",
     rhythm: "设定每分钟步数，试听音色，分别调整音乐与节拍音量。",
@@ -1009,7 +1010,7 @@ export default function App() {
                         key={track.id}
                         data-track-id={track.id}
                       >
-                        <div className={`library-art ${track.adaptation ? "is-adapted" : ""}`}>
+                        <div className="library-art">
                           <Music2 size={28} />
                           <Waveform values={track.waveform} />
                         </div>
@@ -1018,7 +1019,7 @@ export default function App() {
                             {track.title}
                           </h2>
                           <p>
-                            {track.source || "本地音频"}{track.adaptation ? " · 适配版" : ""}
+                            {track.source || "本地音频"}
                           </p>
                           <div className="library-card-meta">
                             <span>
