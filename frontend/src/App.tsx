@@ -36,7 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { analyzeTrack, request } from "./api";
-import type { ExportJob, Health, SearchResult, Tone, Track } from "./api";
+import type { DeletionPreview, ExportJob, Health, SearchResult, Tone, Track } from "./api";
 import { PreviewEngine } from "./audio";
 import type { MixSettings, PlaybackState } from "./audio";
 import {
@@ -45,8 +45,9 @@ import {
   formatTime,
   SAMPLE_RATE,
 } from "./timeline";
-import { chooseCadenceReference } from "./tempo";
 import TrackTempo from "./TrackTempo";
+import BeatAlignment from "./BeatAlignment";
+import DeleteTrackDialog from "./DeleteTrackDialog";
 import {
   createEntry,
   DEFAULT_SETTINGS,
@@ -54,7 +55,6 @@ import {
   replaceEntryTrack,
   restoreEntries,
   updateSharedTrack,
-  toggleHalfBeatOffset,
 } from "./project";
 import type { PlaylistEntry } from "./project";
 import { AppearancePage, useAppearance, Wallpaper } from "./Appearance";
@@ -159,116 +159,6 @@ function VolumeControl({
   );
 }
 
-function TrackPhase({
-  track,
-  entryId,
-  offsetMs,
-  cadence,
-  onChange,
-}: {
-  track: Track;
-  entryId: string;
-  offsetMs: number;
-  cadence: number;
-  onChange: (offset: number) => void;
-}) {
-  const [draft, setDraft] = useState(String(Number(offsetMs.toFixed(2))));
-  useEffect(() => {
-    setDraft(String(Number(offsetMs.toFixed(2))));
-  }, [offsetMs]);
-
-  function commit() {
-    const value = Number(draft);
-    if (!draft.trim() || !Number.isFinite(value)) {
-      setDraft(String(Number(offsetMs.toFixed(2))));
-      return;
-    }
-    const bounded = Math.max(-1000, Math.min(1000, value));
-    onChange(bounded);
-    setDraft(String(Number(bounded.toFixed(2))));
-  }
-
-  const alignment = track.alignment;
-  const reference = chooseCadenceReference(
-    track.tempo?.bpm ?? alignment?.bpm ?? null,
-    cadence,
-  );
-  const needsAdaptation =
-    reference && Math.abs(reference.cadence - cadence) > 0.2;
-  const uncertain =
-    alignment?.status !== "detected" || alignment.confidence < 0.45;
-  let alignmentLabel = "起拍分析中";
-  if (alignment && alignment.status !== "pending") {
-    alignmentLabel = alignment.anchor_seconds === null
-      ? "起拍未确定，可按听感微调"
-      : `起拍参考 ${Math.round(alignment.confidence * 100)}%`;
-  }
-
-  return (
-    <div className="track-phase">
-      <p className={`phase-status ${uncertain ? "uncertain" : ""}`}>
-        {alignmentLabel}
-        {alignment?.anchor_seconds != null && uncertain && " · 判断较弱"}
-        {alignment?.drift_ms != null && ` · 漂移约 ${Math.round(alignment.drift_ms)} ms`}
-        {needsAdaptation && <span>待适配 · 音乐速度与步频不同</span>}
-      </p>
-      <div className="phase-controls">
-        <label htmlFor={`phase-${entryId}`}>起拍微调</label>
-        <button
-          type="button"
-          onClick={() => onChange(Math.max(-1000, offsetMs - 10))}
-          disabled={offsetMs <= -1000}
-          aria-label={`提前${track.title}的节拍10毫秒`}
-        >
-          −10
-        </button>
-        <div className="phase-input">
-          <input
-            id={`phase-${entryId}`}
-            type="number"
-            min="-1000"
-            max="1000"
-            step="any"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={commit}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                commit();
-                event.currentTarget.blur();
-              }
-            }}
-            aria-label={`${track.title}的起拍偏移毫秒`}
-          />
-          <span>ms</span>
-        </div>
-        <button
-          type="button"
-          onClick={() => onChange(Math.min(1000, offsetMs + 10))}
-          disabled={offsetMs >= 1000}
-          aria-label={`延后${track.title}的节拍10毫秒`}
-        >
-          +10
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange(toggleHalfBeatOffset(offsetMs, cadence))}
-        >
-          切换半拍
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange(0)}
-          disabled={offsetMs === 0}
-        >
-          恢复自动
-        </button>
-      </div>
-      <p className="phase-hint">正值延后节拍，负值提前。</p>
-    </div>
-  );
-}
-
 export default function App() {
   const [saved] = useState(readProject);
   const [route, setRoute] = useState(() =>
@@ -278,6 +168,11 @@ export default function App() {
   const { appearance, updateAppearance } = useAppearance();
   const [libraryTracks, setLibraryTracks] = useState<Track[]>([]);
   const [libraryQuery, setLibraryQuery] = useState("");
+  const [deletionTarget, setDeletionTarget] = useState<{ track: Track; preview: DeletionPreview } | null>(null);
+  const [deletionLoading, setDeletionLoading] = useState("");
+  const [deletionBusy, setDeletionBusy] = useState(false);
+  const [deletionError, setDeletionError] = useState("");
+  const deletedTrackIds = useRef(new Set<string>());
   const [settings, setSettings] = useState<MixSettings>(
     saved?.settings ?? DEFAULT_SETTINGS,
   );
@@ -288,6 +183,11 @@ export default function App() {
     String(saved?.settings.gapSeconds ?? DEFAULT_SETTINGS.gapSeconds),
   );
   const [entries, setEntries] = useState<PlaylistEntry[]>([]);
+  const [alignmentPreview, setAlignmentPreview] = useState<{
+    entryId: string;
+    trackId: string;
+    offsetMs: number;
+  } | null>(null);
   const tracks = useMemo(() => entries.map((entry) => entry.track), [entries]);
   const [tones, setTones] = useState<Tone[]>(FALLBACK_TONES);
   const [health, setHealth] = useState<Health | null>(null);
@@ -323,6 +223,7 @@ export default function App() {
   const playOperation = useRef(0);
   const previousGap = useRef(settings.gapSeconds);
   const latestEntries = useRef(entries);
+  const latestAlignmentPreview = useRef(alignmentPreview);
   const timeline = useMemo(
     () => buildTimeline(tracks, settings.gapSeconds),
     [tracks, settings.gapSeconds],
@@ -379,15 +280,20 @@ export default function App() {
 
   useEffect(() => {
     latestEntries.current = entries;
+    latestAlignmentPreview.current = alignmentPreview;
     const arrangementChanged = engine.current?.setTracks(
       tracks,
-      entries.map((entry) => entry.phaseOffsetMs),
+      entries.map((entry) =>
+        alignmentPreview?.entryId === entry.entryId && alignmentPreview.trackId === entry.track.id
+          ? alignmentPreview.offsetMs
+          : entry.phaseOffsetMs,
+      ),
     );
     if (arrangementChanged) {
       playOperation.current += 1;
       setPlayPending(false);
     }
-  }, [tracks, entries]);
+  }, [tracks, entries, alignmentPreview]);
   useEffect(() => {
     if (previousGap.current !== settings.gapSeconds) {
       previousGap.current = settings.gapSeconds;
@@ -422,6 +328,7 @@ export default function App() {
   }, [ready, tracks, entries, settings, format]);
 
   const handleTrackUpdate = useCallback((updated: Track) => {
+    if (deletedTrackIds.current.has(updated.id)) return;
     setEntries((current) => updateSharedTrack(current, updated));
     setLibraryTracks((current) => {
       const exists = current.some((track) => track.id === updated.id);
@@ -430,6 +337,50 @@ export default function App() {
         : [updated, ...current];
     });
   }, []);
+
+  async function prepareDeletion(track: Track) {
+    if (deletionLoading || deletionBusy) return;
+    setDeletionLoading(track.id);
+    setDeletionError("");
+    try {
+      const preview = await request<DeletionPreview>(`/api/tracks/${track.id}/deletion`);
+      setDeletionTarget({ track, preview });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "读取删除范围失败，请重试。");
+    } finally {
+      setDeletionLoading("");
+    }
+  }
+
+  async function confirmDeletion() {
+    if (!deletionTarget || deletionBusy) return;
+    setDeletionBusy(true);
+    setDeletionError("");
+    const affected = new Set(deletionTarget.preview.track_ids);
+    if (latestEntries.current.some((entry) => affected.has(entry.track.id))) {
+      playOperation.current += 1;
+      setPlayPending(false);
+      engine.current?.pause();
+    }
+    try {
+      const result = await request<{ deleted_ids: string[] }>(`/api/tracks/${deletionTarget.track.id}`, {
+        method: "DELETE",
+        body: JSON.stringify({ expected_ids: deletionTarget.preview.track_ids }),
+      });
+      const removed = new Set(result.deleted_ids.length ? result.deleted_ids : deletionTarget.preview.track_ids);
+      for (const id of removed) deletedTrackIds.current.add(id);
+      setEntries((current) => current.filter((entry) => !removed.has(entry.track.id)));
+      setLibraryTracks((current) => current.filter((track) => !removed.has(track.id)));
+      setDeletionTarget(null);
+      setNotice(`已删除 ${removed.size} 条素材`);
+    } catch (reason) {
+      setDeletionError(reason instanceof Error ? reason.message : "删除失败，请重试。");
+      const preview = await request<DeletionPreview>(`/api/tracks/${deletionTarget.track.id}/deletion`).catch(() => null);
+      if (preview) setDeletionTarget({ ...deletionTarget, preview });
+    } finally {
+      setDeletionBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!exportActive || !job) return;
@@ -580,13 +531,13 @@ export default function App() {
     const operation = ++playOperation.current;
     try {
       const missingAlignment = tracks.filter(
-        (track) => !track.alignment || track.alignment.status === "pending",
+        (track) => !track.alignment || track.alignment.status === "pending" || track.tempo?.source === "manual",
       );
       const pending = [
         ...new Map(missingAlignment.map((track) => [track.id, track])).values(),
       ];
       const results = await Promise.all(
-        pending.map((track) => analyzeTrack(track.id).catch(() => null)),
+        pending.map((track) => analyzeTrack(track.id, track.tempo?.source === "manual").catch(() => null)),
       );
       if (operation !== playOperation.current) return;
       const analyzed = results.filter((track) => track !== null);
@@ -596,7 +547,12 @@ export default function App() {
         const currentEntries = latestEntries.current;
         engine.current?.setTracks(
           currentEntries.map((entry) => byId.get(entry.track.id) ?? entry.track),
-          currentEntries.map((entry) => entry.phaseOffsetMs),
+          currentEntries.map((entry) => {
+            const preview = latestAlignmentPreview.current;
+            return preview?.entryId === entry.entryId && preview.trackId === entry.track.id
+              ? preview.offsetMs
+              : entry.phaseOffsetMs;
+          }),
         );
       }
       await engine.current?.play();
@@ -674,6 +630,11 @@ export default function App() {
       gapSeconds: parameters.gap_seconds,
     };
     try {
+      const legacyTracks = [...new Map(tracks
+        .filter((track) => track.tempo?.source === "manual")
+        .map((track) => [track.id, track])).values()];
+      const analyzed = await Promise.all(legacyTracks.map((track) => analyzeTrack(track.id, true)));
+      analyzed.forEach(handleTrackUpdate);
       const result = await request<ExportJob>("/api/exports", {
         method: "POST",
         body: JSON.stringify(parameters),
@@ -719,10 +680,39 @@ export default function App() {
   const filteredLibrary = libraryTracks.filter((track) =>
     `${track.title} ${track.source}`.toLocaleLowerCase().includes(libraryQuery.trim().toLocaleLowerCase()),
   );
-  const selectedEntry = route.page === "track"
+  const selectedEntry = route.page === "track" || route.page === "alignment"
     ? entries.find((entry) => entry.entryId === route.entryId)
     : undefined;
-  const activeNavigation = route.page === "track" ? "mix" : route.page;
+  const selectedIndex = selectedEntry
+    ? entries.findIndex((entry) => entry.entryId === selectedEntry.entryId)
+    : -1;
+  const calibrationEntryId = route.page === "alignment" ? route.entryId : null;
+  const previewAlignment = useCallback((offset: number | null) => {
+    const entry = latestEntries.current.find((candidate) => candidate.entryId === calibrationEntryId);
+    setAlignmentPreview(offset === null || !entry ? null : {
+      entryId: entry.entryId,
+      trackId: entry.track.id,
+      offsetMs: offset,
+    });
+  }, [calibrationEntryId]);
+
+  function finishAlignment(offset?: number) {
+    if (!selectedEntry) return;
+    const entry = latestEntries.current.find((candidate) => candidate.entryId === selectedEntry.entryId);
+    if (!entry || entry.track.id !== selectedEntry.track.id) return;
+    if (offset !== undefined) {
+      setEntries((current) => current.map((candidate) =>
+        candidate.entryId === entry.entryId && candidate.track.id === entry.track.id
+          ? { ...candidate, phaseOffsetMs: offset }
+          : candidate,
+      ));
+      setNotice("已确认并保存这条配乐的起拍对齐");
+    }
+    setAlignmentPreview(null);
+    window.location.hash = routeHash({ page: "track", entryId: entry.entryId });
+  }
+
+  const activeNavigation = route.page === "track" || route.page === "alignment" ? "mix" : route.page;
   const navigation = [
     { page: "library", icon: Library },
     { page: "import", icon: Plus },
@@ -736,7 +726,8 @@ export default function App() {
     import: "从文件、链接、歌曲搜索或 AI 配乐开始。导入后自动加入曲库与编排。",
     mix: "调整播放顺序，进入单曲调试，让每一段音乐衔接你的步伐。",
     rhythm: "设定每分钟步数，试听音色，分别调整音乐与节拍音量。",
-    track: "校正 BPM、制作适配版，并按听感微调这一条配乐的起拍。",
+    track: "程序自动提取音乐节奏和起拍，按目标步频制作适配版。",
+    alignment: "对照节拍器与音乐鼓点试听，确认适合这条配乐的对齐位置。",
     export: "核对编排与混音设置，合成为可以离线播放的跑步配乐。",
     appearance: "选择适合你的背景、明暗和字号。",
   };
@@ -855,7 +846,7 @@ export default function App() {
               <Menu size={23} />
             </button>
             <nav
-              className="breadcrumb"
+              className={`breadcrumb ${route.page === "alignment" ? "calibration-breadcrumb" : ""}`}
               aria-label="当前位置"
             >
               <a href="#/library">
@@ -864,7 +855,7 @@ export default function App() {
               <span aria-hidden="true">
                 /
               </span>
-              {route.page === "track" &&
+              {(route.page === "track" || route.page === "alignment") &&
                 <>
                   <a href="#/mix">
                     配乐编排
@@ -874,6 +865,12 @@ export default function App() {
                   </span>
                 </>
               }
+              {route.page === "alignment" && selectedEntry && (
+                <>
+                  <a href={routeHash({ page: "track", entryId: selectedEntry.entryId })}>单曲调试</a>
+                  <span aria-hidden="true">/</span>
+                </>
+              )}
               <span aria-current="page">
                 {PAGE_TITLES[route.page]}
               </span>
@@ -1010,6 +1007,7 @@ export default function App() {
                       <article
                         className="library-card glass-panel"
                         key={track.id}
+                        data-track-id={track.id}
                       >
                         <div className={`library-art ${track.adaptation ? "is-adapted" : ""}`}>
                           <Music2 size={28} />
@@ -1031,6 +1029,7 @@ export default function App() {
                             </span>
                           </div>
                         </div>
+                        <div className="library-card-actions">
                         <button
                           className="secondary-button"
                           onClick={() => {
@@ -1042,6 +1041,15 @@ export default function App() {
                           <Plus size={18} />
                           加入编排
                         </button>
+                        <button
+                          className="icon-button library-delete-button"
+                          disabled={!!deletionLoading || deletionBusy}
+                          onClick={() => void prepareDeletion(track)}
+                          aria-label={`删除素材${track.title}`}
+                        >
+                          {deletionLoading === track.id ? <LoaderCircle size={18} className="spin" /> : <Trash2 size={18} />}
+                        </button>
+                        </div>
                       </article>
                     ))}
                   </div>
@@ -1723,7 +1731,7 @@ export default function App() {
               </div>
             </section>
           </div>
-          {route.page === "track" && !ready && (
+          {(route.page === "track" || route.page === "alignment") && !ready && (
             <div
               className="empty-state glass-panel"
               role="status"
@@ -1795,27 +1803,32 @@ export default function App() {
                   }}
                 />
               </div>
-              <div className="detail-section">
-                <div className="section-heading">
-                  <h3>
-                    节拍起点
-                  </h3>
-                </div>
-                <TrackPhase
-                  track={entry.track}
-                  entryId={entry.entryId}
-                  offsetMs={entry.phaseOffsetMs}
-                  cadence={settings.cadence}
-                  onChange={(offset) => setEntries((current) => current.map((candidate) =>
-                    candidate.entryId === entry.entryId
-                      ? { ...candidate, phaseOffsetMs: offset }
-                      : candidate,
-                  ))}
-                />
-              </div>
+              <p className="saved-alignment">
+                {entry.phaseOffsetMs === 0
+                  ? entry.track.alignment?.anchor_seconds == null
+                    ? "起拍待确认，可进入可视化校准试听"
+                    : "起拍使用程序自动提取的参考位置"
+                  : `已保存的起拍微调 ${Number(entry.phaseOffsetMs.toFixed(2))} ms`}
+              </p>
             </section>
           ))}
-          {route.page === "track" && ready && !selectedEntry && (
+          {route.page === "alignment" && selectedEntry && (
+            <BeatAlignment
+              key={selectedEntry.entryId}
+              track={selectedEntry.track}
+              entryId={selectedEntry.entryId}
+              cadence={settings.cadence}
+              offsetMs={selectedEntry.phaseOffsetMs}
+              playback={playback}
+              trackStart={timeline.tracks[selectedIndex].startFrame / SAMPLE_RATE}
+              onSeek={(seconds) => seekPlayback(timeline.tracks[selectedIndex].startFrame / SAMPLE_RATE + seconds)}
+              onTogglePlayback={() => void togglePlayback()}
+              onPreviewOffset={previewAlignment}
+              onConfirm={(offset) => finishAlignment(offset)}
+              onCancel={() => finishAlignment()}
+            />
+          )}
+          {(route.page === "track" || route.page === "alignment") && ready && !selectedEntry && (
             <div className="empty-state glass-panel">
               <Music2 size={38} />
               <h2>
@@ -2153,6 +2166,18 @@ export default function App() {
           </span>
         </div>
       </section>
+      {deletionTarget && (
+        <DeleteTrackDialog
+          titles={deletionTarget.preview.titles}
+          projectCount={entries.filter((entry) => deletionTarget.preview.track_ids.includes(entry.track.id)).length}
+          busy={deletionBusy}
+          error={deletionError}
+          onConfirm={() => void confirmDeletion()}
+          onClose={() => {
+            if (!deletionBusy) setDeletionTarget(null);
+          }}
+        />
+      )}
       {(error || notice) && (
         <div
           className={`toast ${error ? "error" : ""}`}

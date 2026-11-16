@@ -1,0 +1,525 @@
+.auto-rhythm-heading,
+.auto-rhythm-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.auto-rhythm-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: max(14px, .9em);
+}
+.auto-rhythm-value {
+  display: block;
+  font-size: 27px;
+  margin-top: 8px;
+  font-weight: 600;
+}
+.auto-rhythm-status {
+  color: var(--muted);
+  font-size: max(14px, .88em);
+  margin-top: 15px;
+}
+.auto-rhythm-actions {
+  padding: 22px 0;
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.auto-rhythm-actions > div {
+  display: grid;
+  gap: 6px;
+}
+.auto-rhythm-actions > div > span {
+  color: var(--muted);
+  font-size: max(14px, .85em);
+}
+.automatic-rhythm .open-alignment {
+  margin-top: 22px;
+}
+.automatic-rhythm .adaptation-result {
+  flex-wrap: wrap;
+}
+.automatic-rhythm .adaptation-result button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid var(--accent-line);
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: max(14px, .9em);
+}
+.beat-alignment-page {
+  display: grid;
+  gap: 24px;
+}
+.calibration-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 20px 28px;
+}
+.calibration-intro h2 {
+  overflow-wrap: anywhere;
+}
+.calibration-intro p,
+.calibration-adjustment > p,
+.calibration-match > p {
+  color: var(--muted);
+  font-size: max(14px, .88em);
+  margin-top: 9px;
+  line-height: 1.8;
+}
+.calibration-cadence {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-family: var(--display);
+  font-size: 38px;
+  font-weight: 600;
+  text-align: right;
+  line-height: 1.2;
+}
+.calibration-cadence small {
+  display: block;
+  color: var(--muted);
+  font-family: "DM Sans", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  margin-top: 6px;
+}
+.calibration-workbench {
+  padding: 20px 28px 16px;
+  min-width: 0;
+}
+.calibration-segment-toolbar,
+.calibration-segment-controls,
+.calibration-preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.calibration-segment-toolbar {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.calibration-segment-controls > span {
+  color: var(--ink);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.calibration-segment-controls .icon-button {
+  border: 1px solid var(--line-strong);
+}
+.calibration-segment-range {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.calibration-segment-range > span {
+  flex-shrink: 0;
+}
+.calibration-comparison {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 56px;
+  margin-top: 16px;
+}
+.calibration-comparison::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+.calibration-lane {
+  min-width: 0;
+  color: var(--accent);
+}
+.calibration-lane + .calibration-lane {
+  min-width: 0;
+}
+.calibration-lane.music-lane {
+  color: var(--warning);
+}
+.calibration-lane-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-height: 42px;
+}
+.calibration-lane-heading h3 {
+  font-size: 20px;
+  color: var(--ink);
+}
+.calibration-lane-heading > span {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+.strong-node-key,
+.drum-node-key {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  border-radius: 50%;
+  background: var(--warning);
+}
+.drum-node-key {
+  width: 5px;
+  height: 5px;
+  margin-left: 7px;
+  opacity: .65;
+}
+.calibration-ripple {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  margin: 18px auto;
+}
+.calibration-ripple > i {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.calibration-ripple > span {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 17px;
+}
+.calibration-ripple.is-hit > span {
+  color: var(--ink);
+  box-shadow: 0 0 32px var(--accent-soft), inset 0 0 22px var(--accent-soft);
+}
+.calibration-plot {
+  width: 100%;
+  overflow: hidden;
+}
+.calibration-plot svg {
+  display: block;
+  width: 100%;
+  height: 125px;
+  overflow: hidden;
+}
+.calibration-grid-line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.calibration-zero-line {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+.calibration-envelope {
+  stroke: currentColor;
+  stroke-width: 1.2;
+  opacity: .28;
+}
+.calibration-tick line,
+.calibration-onset line {
+  stroke: currentColor;
+  stroke-width: 1.3;
+}
+.calibration-tick circle,
+.calibration-onset circle {
+  fill: currentColor;
+}
+.calibration-onset {
+  opacity: .58;
+}
+.calibration-onset.strong {
+  opacity: 1;
+}
+.calibration-onset.strong line {
+  stroke-width: 2.5;
+}
+.calibration-playhead {
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+.calibration-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 8px;
+}
+.calibration-plot-placeholder {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  height: 155px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.calibration-live-status {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 17px;
+  margin-top: 23px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.calibration-live-status > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.calibration-live-status i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--subtle);
+}
+.calibration-live-status .active i {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.calibration-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  margin-top: 15px;
+  color: var(--danger);
+  font-size: max(14px, .88em);
+}
+.calibration-load-error p {
+  overflow-wrap: anywhere;
+}
+.calibration-bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+}
+.calibration-adjustment,
+.calibration-match {
+  padding: 27px 28px;
+}
+.calibration-adjustment h2,
+.calibration-match h2 {
+  font-size: 22px;
+}
+.calibration-offset-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 25px;
+}
+.calibration-offset-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.calibration-offset-input input {
+  width: 110px;
+  min-width: 0;
+  text-align: center;
+  font-size: 20px;
+}
+.calibration-offset-range {
+  margin-top: 22px;
+  margin-bottom: 13px;
+}
+.calibration-match-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.calibration-match-heading > span {
+  color: var(--muted);
+  font-size: 14px;
+}
+.calibration-match-number {
+  color: var(--accent);
+  font-family: var(--display);
+  font-size: 62px;
+  line-height: 1.2;
+  margin-top: 15px;
+}
+.calibration-match-number small {
+  font-family: "DM Sans", sans-serif;
+  font-size: 22px;
+  margin-left: 5px;
+}
+.calibration-match dl {
+  display: grid;
+  gap: 7px;
+  margin: 15px 0 0;
+  font-size: max(14px, .88em);
+}
+.calibration-match dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+.calibration-match dt {
+  color: var(--muted);
+}
+.calibration-match dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.calibration-save-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+}
+.calibration-segment-range input[type="range"],
+.calibration-offset-range {
+  height: 44px;
+  background-size: 100% 6px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+@media (max-width: 1060px) {
+  .calibration-comparison {
+    gap: 40px;
+  }
+  .calibration-bottom-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 650px) {
+  .beat-alignment-page {
+    gap: 20px;
+  }
+  .calibration-intro {
+    display: grid;
+    gap: 17px;
+    padding: 22px 20px;
+  }
+  .calibration-cadence {
+    text-align: left;
+    font-size: 32px;
+  }
+  .calibration-cadence small {
+    display: inline-block;
+    margin-left: 9px;
+  }
+  .calibration-workbench {
+    padding: 20px 18px;
+  }
+  .calibration-segment-toolbar,
+  .calibration-preview-controls {
+    gap: 10px;
+  }
+  .calibration-segment-controls {
+    justify-content: space-between;
+    width: 100%;
+  }
+  .calibration-preview-controls {
+    width: 100%;
+  }
+  .calibration-preview-controls .secondary-button {
+    flex: 1;
+  }
+  .calibration-segment-range {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+  .calibration-segment-range input {
+    order: 3;
+    flex-basis: 100%;
+  }
+  .calibration-segment-range > span:last-child {
+    margin-left: auto;
+  }
+  .calibration-comparison {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    margin-top: 18px;
+  }
+  .calibration-comparison::before {
+    display: none;
+  }
+  .calibration-lane + .calibration-lane {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding-left: 0;
+    padding-top: 23px;
+  }
+  .calibration-ripple {
+    width: 88px;
+    height: 88px;
+    margin: 23px auto;
+  }
+  .calibration-ripple > span {
+    width: 66px;
+    height: 66px;
+    font-size: 16px;
+  }
+  .calibration-plot svg {
+    height: 110px;
+  }
+  .calibration-adjustment,
+  .calibration-match {
+    padding: 23px 20px;
+  }
+  .calibration-offset-controls {
+    gap: 8px;
+  }
+  .calibration-offset-controls .secondary-button {
+    padding-inline: 14px;
+  }
+  .calibration-offset-input input {
+    width: 90px;
+  }
+  .calibration-save-actions {
+    align-items: stretch;
+    gap: 10px;
+  }
+  .calibration-save-actions > button {
+    flex: 1;
+    padding-inline: 10px;
+    font-size: max(14px, .9em);
+  }
+  .auto-rhythm-actions .adapt-button,
+  .automatic-rhythm .open-alignment {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .calibration-ripple > i {
+    display: none;
+  }
+}

@@ -18,6 +18,14 @@ test("track routes preserve the stable entry identifier through encoding", () =>
   assert.deepEqual(parseRoute(routeHash(route), false), route);
 });
 
+test("visual alignment is a directly addressable child of its track", () => {
+  const route = { page: "alignment", entryId: "entry / 中文%" };
+  assert.equal(routeHash(route), "#/track/entry%20%2F%20%E4%B8%AD%E6%96%87%25/align");
+  assert.deepEqual(parseRoute(routeHash(route), true), route);
+  assert.deepEqual(parseRoute("#/track/entry/unknown", true), { page: "mix" });
+  assert.deepEqual(parseRoute("#/alignment", true), { page: "mix" });
+});
+
 test("unknown and malformed routes safely return to an available starting page", () => {
   for (const hash of ["#/unknown", "#/track", "#/track/", "#/track/%ZZ", "#/mix/extra", "#/constructor", "#/toString"]) {
     assert.deepEqual(parseRoute(hash, true), { page: "mix" });

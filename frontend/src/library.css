@@ -1,0 +1,110 @@
+.library-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.library-card-actions > .secondary-button {
+  flex: 1;
+}
+
+.library-delete-button {
+  color: var(--danger);
+  border: 1px solid var(--line-strong);
+  background: var(--panel-soft);
+}
+
+.delete-track-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  padding: 30px;
+  color: var(--ink);
+  background: var(--panel-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 15px;
+  box-shadow: var(--shadow);
+}
+
+.delete-track-dialog::backdrop {
+  background: rgba(3, 14, 21, .7);
+  backdrop-filter: blur(5px);
+}
+
+.delete-dialog-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.delete-dialog-heading > svg,
+.delete-dialog-error {
+  color: var(--danger);
+}
+
+.delete-track-dialog p {
+  color: var(--muted);
+  font-size: 1em;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+
+.delete-track-list {
+  max-height: 210px;
+  overflow-y: auto;
+  padding-left: 24px;
+  margin-block: 20px;
+  font-size: .94em;
+}
+
+.delete-track-list li {
+  padding-block: 4px;
+  overflow-wrap: anywhere;
+}
+
+.delete-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.delete-confirm-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 46px;
+  padding: 11px 20px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: .94em;
+  font-weight: 600;
+}
+
+.saved-alignment {
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+@media (max-width: 520px) {
+  .delete-track-dialog {
+    padding: 24px 20px;
+  }
+
+  .delete-dialog-actions > button {
+    flex: 1;
+  }
+}
+
+@media (max-width: 800px) {
+  .calibration-breadcrumb > a,
+  .calibration-breadcrumb > span[aria-hidden="true"] {
+    display: none;
+  }
+}

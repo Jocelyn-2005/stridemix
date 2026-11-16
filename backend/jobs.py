@@ -1,5 +1,6 @@
 import threading
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -18,6 +19,14 @@ class ExportManager:
 
     def create(self, request: ExportRequest) -> Job:
         snapshot = request.model_copy(deep=True)
+        release = self.library.acquire_tracks([reference.id for reference in snapshot.tracks])
+        try:
+            return self._create(snapshot, release)
+        except Exception:
+            release()
+            raise
+
+    def _create(self, snapshot: ExportRequest, release: Callable[[], None]) -> Job:
         tracks = {}
         for reference in snapshot.tracks:
             if reference.id not in tracks:
@@ -38,7 +47,7 @@ class ExportManager:
         with self.lock:
             self.jobs[job_id] = job
             self.cancellations[job_id] = threading.Event()
-        self.executor.submit(self._run, job_id, snapshot, paths, frame_count, segments, gap_frames)
+        self.executor.submit(self._run, job_id, snapshot, paths, frame_count, segments, gap_frames, release)
         return self.get(job_id)
 
     def get(self, job_id: str) -> Job:
@@ -69,7 +78,7 @@ class ExportManager:
 
     def _run(
         self, job_id: str, request: ExportRequest, paths: list[Path], frame_count: int,
-        segments: list[tuple[int, int, float]], gap_frames: int,
+        segments: list[tuple[int, int, float]], gap_frames: int, release: Callable[[], None],
     ) -> None:
         directory = self.library.exports_dir / job_id
         cancelled = self.cancellations[job_id]
@@ -120,10 +129,13 @@ class ExportManager:
                 destination.unlink(missing_ok=True)
             self.update(job_id, status="failed", error=str(exc)[:1500])
         finally:
-            if directory_created:
-                metronome.unlink(missing_ok=True)
-                concat_file.unlink(missing_ok=True)
-                silence_file.unlink(missing_ok=True)
+            try:
+                if directory_created:
+                    metronome.unlink(missing_ok=True)
+                    concat_file.unlink(missing_ok=True)
+                    silence_file.unlink(missing_ok=True)
+            finally:
+                release()
 
     def shutdown(self) -> None:
         with self.lock:

@@ -18,6 +18,25 @@ export interface TrackAlignment {
   status: "pending" | "detected" | "uncertain" | "unavailable";
 }
 
+export interface RhythmOnset {
+  time: number;
+  strength: number;
+  strong: boolean;
+}
+
+export interface RhythmWindow {
+  start_seconds: number;
+  duration_seconds: number;
+  envelope: number[];
+  onsets: RhythmOnset[];
+  reliability: number;
+}
+
+export interface DeletionPreview {
+  track_ids: string[];
+  titles: string[];
+}
+
 export interface TrackTempo {
   bpm: number | null;
   confidence: number;
@@ -61,15 +80,21 @@ export interface ExportJob {
 
 const analyses = new Map<string, Promise<Track>>();
 
-export function analyzeTrack(id: string) {
-  const existing = analyses.get(id);
+export function analyzeTrack(id: string, force = false) {
+  const key = `${force ? "reanalyze" : "analyze"}:${id}`;
+  const existing = analyses.get(key);
   if (existing) return existing;
+  const operation = force ? "reanalyze" : "analyze";
   const pending = request<Track>(
-    `/api/tracks/${encodeURIComponent(id)}/analyze`,
+    `/api/tracks/${encodeURIComponent(id)}/${operation}`,
     { method: "POST" },
-  ).finally(() => analyses.delete(id));
-  analyses.set(id, pending);
+  ).finally(() => analyses.delete(key));
+  analyses.set(key, pending);
   return pending;
+}
+
+export function reanalyzeTrack(id: string) {
+  return analyzeTrack(id, true);
 }
 
 export async function request<T>(

@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
@@ -17,11 +17,24 @@ from starlette.concurrency import run_in_threadpool
 from backend.audio import TONES, AudioError, ffmpeg_executable, write_tone
 from backend.jobs import ExportManager
 from backend.models import AdaptRequest, ExportRequest, GenerationRequest, ManualTempoRequest, SearchRequest, Track, UrlRequest
+from backend.rhythm import rhythm_window
 from backend.sources import download_video, generate_music, search_music
-from backend.storage import MediaLibrary
+from backend.storage import MediaBusyError, MediaLibrary, PROCESSING_LIMIT
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
+
+
+class MediaFileResponse(FileResponse):
+    def __init__(self, path: Path, release, **kwargs):
+        super().__init__(path, **kwargs)
+        self.release = release
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.release()
 
 
 def create_app(data_dir: Path | None = None) -> FastAPI:
@@ -50,6 +63,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @application.exception_handler(AudioError)
     async def audio_error_handler(request, exc: AudioError):
         return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @application.exception_handler(MediaBusyError)
+    async def media_busy_handler(request, exc: MediaBusyError):
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @application.get("/api/health")
     def health():
@@ -84,6 +101,21 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="素材不存在，请重新导入") from exc
 
+    @application.get("/api/tracks/{track_id}/deletion")
+    def deletion_preview(track_id: str):
+        try:
+            selected = library.deletion_preview(track_id)
+            return {"track_ids": [track.id for track in selected], "titles": [track.title for track in selected]}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="素材不存在，请刷新曲库") from exc
+
+    @application.delete("/api/tracks/{track_id}")
+    def delete_track(track_id: str, expected_ids: list[str] | None = Body(default=None, embed=True)):
+        try:
+            return {"deleted_ids": library.delete(track_id, expected_ids)}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="素材不存在，请刷新曲库") from exc
+
     @application.post("/api/tracks/{track_id}/analyze", response_model=Track)
     def analyze_track(track_id: str):
         try:
@@ -95,6 +127,28 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     def manual_tempo(track_id: str, request: ManualTempoRequest):
         try:
             return library.set_manual_tempo(track_id, request.bpm)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="素材不存在，请重新导入") from exc
+
+    @application.post("/api/tracks/{track_id}/reanalyze", response_model=Track)
+    def reanalyze_track(track_id: str):
+        try:
+            return library.analyze(track_id, force=True)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="素材不存在，请重新导入") from exc
+
+    @application.get("/api/tracks/{track_id}/rhythm")
+    def track_rhythm(
+        track_id: str,
+        start_seconds: float = Query(default=0, ge=0),
+        duration_seconds: float = Query(default=12, gt=0, le=30),
+    ):
+        try:
+            with library.use_tracks([track_id]), PROCESSING_LIMIT:
+                current = library.get(track_id)
+                return rhythm_window(
+                    library.track_path(track_id), start_seconds, duration_seconds, current.tempo.bpm,
+                )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="素材不存在，请重新导入") from exc
 
@@ -138,10 +192,14 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @application.get("/api/media/{track_id}")
     def media(track_id: str):
         try:
-            path = library.track_path(track_id)
+            release = library.acquire_tracks([track_id])
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="素材不存在，请重新导入") from exc
-        return FileResponse(path, media_type="audio/wav")
+        try:
+            return MediaFileResponse(library.track_path(track_id), release, media_type="audio/wav")
+        except Exception:
+            release()
+            raise
 
     @application.get("/api/media/{track_id}/chunk")
     def media_chunk(
@@ -150,15 +208,15 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         frame_count: int = Query(default=220500, ge=1, le=441000),
     ):
         try:
-            path = library.track_path(track_id)
+            with library.use_tracks([track_id]):
+                with wave.open(str(library.track_path(track_id)), "rb") as stream:
+                    if start_frame >= stream.getnframes():
+                        raise HTTPException(status_code=416, detail="请求片段超出音频长度")
+                    stream.setpos(start_frame)
+                    samples = stream.readframes(frame_count)
+                    channels, sample_width, sample_rate = stream.getnchannels(), stream.getsampwidth(), stream.getframerate()
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="素材不存在，请重新导入") from exc
-        with wave.open(str(path), "rb") as stream:
-            if start_frame >= stream.getnframes():
-                raise HTTPException(status_code=416, detail="请求片段超出音频长度")
-            stream.setpos(start_frame)
-            samples = stream.readframes(frame_count)
-            channels, sample_width, sample_rate = stream.getnchannels(), stream.getsampwidth(), stream.getframerate()
         output = io.BytesIO()
         with wave.open(output, "wb") as stream:
             stream.setnchannels(channels)

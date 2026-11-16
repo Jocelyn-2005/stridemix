@@ -1,22 +1,16 @@
 import { useEffect, useState } from "react";
-import type { FormEvent } from "react";
 import {
-  Check,
-  Gauge,
+  AudioLines,
   LoaderCircle,
-  Pencil,
   RotateCcw,
+  ScanLine,
   WandSparkles,
-  X,
 } from "lucide-react";
-import { analyzeTrack, request } from "./api";
+import { analyzeTrack, reanalyzeTrack, request } from "./api";
 import type { Track } from "./api";
-import {
-  cadenceReferences,
-  chooseCadenceReference,
-  formatTempo,
-} from "./tempo";
+import { chooseCadenceReference, formatTempo } from "./tempo";
 import { formatTime } from "./timeline";
+import "./alignment.css";
 
 interface TrackTempoProps {
   track: Track;
@@ -34,312 +28,175 @@ export default function TrackTempo({
   onReplace,
 }: TrackTempoProps) {
   const [operation, setOperation] = useState<
-    "analyzing" | "saving" | "adapting" | "restoring" | null
+    "analyzing" | "adapting" | "restoring" | null
   >(null);
   const [error, setError] = useState("");
-  const [manualOpen, setManualOpen] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [selectedMultiplier, setSelectedMultiplier] = useState<number | null>(
-    null,
-  );
   const tempo = track.tempo;
   const status = tempo?.status ?? "pending";
   const alignmentStatus = track.alignment?.status ?? "pending";
-  const bpm = tempo?.bpm ?? null;
-  const references = cadenceReferences(bpm);
-  const reference =
-    references.find(
-      (candidate) => candidate.multiplier === selectedMultiplier,
-    ) ?? chooseCadenceReference(bpm, cadence);
-  const speed = reference ? cadence / reference.cadence : null;
+  const legacyManual = tempo?.source === "manual";
+  const bpm = legacyManual ? null : tempo?.bpm ?? null;
+  const reference = chooseCadenceReference(bpm, cadence);
   const busy = operation !== null;
 
-  useEffect(() => {
-    setSelectedMultiplier(null);
-    setManualOpen(false);
-    setError("");
-  }, [track.id, bpm]);
+  let rhythmLabel = operation === "analyzing" ? "正在识别" : "节奏未确定";
+  if (bpm !== null) {
+    rhythmLabel = `${formatTempo(bpm)} BPM`;
+  }
 
-  useEffect(() => {
-    if (status !== "pending" && alignmentStatus !== "pending") return;
-    let active = true;
-    setOperation("analyzing");
-    analyzeTrack(track.id)
-      .then((updated) => {
-        if (!active) return;
-        setOperation(null);
-        onTrackUpdate(updated);
-      })
-      .catch((reason) => {
-        if (!active) return;
-        setOperation(null);
-        setError(
-          reason instanceof Error ? reason.message : "节奏分析失败，请重试。",
-        );
-      });
-    return () => {
-      active = false;
-    };
-  }, [track.id, status, alignmentStatus, onTrackUpdate]);
-
-  async function retryAnalysis() {
-    setError("");
-    setOperation("analyzing");
-    try {
-      const updated = await analyzeTrack(track.id);
-      setOperation(null);
-      onTrackUpdate(updated);
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "节奏分析失败，请重试。",
-      );
-      setOperation(null);
+  let rhythmStatus = "当前音频的节奏证据较弱，可进入可视化校准试听。";
+  if (bpm !== null) {
+    if (track.alignment?.anchor_seconds == null) {
+      rhythmStatus = "音乐节奏已识别，起拍证据不足，可进入可视化校准核对。";
+    } else if (alignmentStatus === "detected") {
+      rhythmStatus = "已从音频提取鼓点并设置起拍，节拍器始终每响一步。";
+    } else {
+      rhythmStatus = "已找到起拍参考，鼓点判断较弱，可进入可视化校准核对。";
     }
   }
 
-  async function saveTempo(event: FormEvent) {
-    event.preventDefault();
-    const value = Number(draft);
-    if (!draft.trim() || !Number.isFinite(value) || value < 30 || value > 480) {
-      setError("请输入 30–480 之间的 BPM。");
+  useEffect(() => {
+    setError("");
+  }, [track.id]);
+
+  useEffect(() => {
+    if (!legacyManual && status !== "pending" && alignmentStatus !== "pending") {
       return;
     }
-    setError("");
-    setOperation("saving");
-    try {
-      const updated = await request<Track>(
-        `/api/tracks/${encodeURIComponent(track.id)}/tempo`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ bpm: value }),
-        },
-      );
+    let active = true;
+    setOperation("analyzing");
+    const analysis = legacyManual
+      ? reanalyzeTrack(track.id)
+      : analyzeTrack(track.id);
+
+    analysis.then((updated) => {
+      if (!active) {
+        return;
+      }
+      setOperation(null);
       onTrackUpdate(updated);
-      setManualOpen(false);
+    }).catch((reason) => {
+      if (!active) {
+        return;
+      }
+      setOperation(null);
+      setError(reason instanceof Error ? reason.message : "自动识别失败，请重新识别。");
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [track.id, legacyManual, status, alignmentStatus, onTrackUpdate]);
+
+  async function reanalyze() {
+    if (busy) {
+      return;
+    }
+    setOperation("analyzing");
+    setError("");
+    try {
+      onTrackUpdate(await reanalyzeTrack(track.id));
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "保存 BPM 失败，请重试。",
-      );
+      setError(reason instanceof Error ? reason.message : "自动识别失败，请重试。");
     } finally {
       setOperation(null);
     }
   }
 
   async function adapt() {
-    if (!reference || busy) return;
-    setError("");
+    if (!reference || busy) {
+      return;
+    }
     setOperation("adapting");
+    setError("");
     try {
       const updated = await request<Track>(
         `/api/tracks/${encodeURIComponent(track.id)}/adapt`,
         {
           method: "POST",
-          body: JSON.stringify({
-            cadence,
-            reference_cadence: reference.cadence,
-          }),
+          body: JSON.stringify({ cadence, reference_cadence: reference.cadence }),
         },
       );
       onReplace(updated);
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "生成变速版失败，请重试。",
-      );
+      setError(reason instanceof Error ? reason.message : "制作适配版失败，请重试。");
     } finally {
       setOperation(null);
     }
   }
 
   async function restore() {
-    if (!track.adaptation || busy) return;
-    setError("");
+    if (!track.adaptation || busy) {
+      return;
+    }
     setOperation("restoring");
+    setError("");
     try {
       const original = await request<Track>(
         `/api/tracks/${encodeURIComponent(track.adaptation.original_id)}`,
       );
       onReplace(original);
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "恢复原版失败，请重试。",
-      );
+      setError(reason instanceof Error ? reason.message : "恢复原版失败，请重试。");
     } finally {
       setOperation(null);
     }
   }
 
-  const bpmLabel =
-    tempo?.source === "manual"
-      ? "手动 BPM"
-      : tempo?.source === "adapted"
-        ? "变速 BPM"
-        : "估算 BPM";
-  const lowConfidence =
-    status === "uncertain" ||
-    (tempo?.source === "analysis" && tempo.confidence < 0.45);
-
   return (
-    <div className="track-tempo">
-      <div className="tempo-heading">
-        <span className="tempo-value">
-          <Gauge size={13} />
-          {bpm === null ? (
-            "BPM 待填写"
-          ) : (
-            <>
-              {bpmLabel}
-              <strong>{formatTempo(bpm)}</strong>
-            </>
-          )}
-        </span>
+    <div className="track-tempo automatic-rhythm">
+      <div className="auto-rhythm-heading">
+        <div>
+          <span className="auto-rhythm-label">
+            <AudioLines size={19} />
+            自动识别音乐节奏
+          </span>
+          <strong className="auto-rhythm-value">{rhythmLabel}</strong>
+        </div>
         <button
-          className="tempo-edit"
-          type="button"
+          className="secondary-button"
+          onClick={() => void reanalyze()}
           disabled={busy}
-          onClick={() => {
-            setDraft(bpm === null ? "" : String(bpm));
-            setManualOpen(!manualOpen);
-          }}
-          aria-label={`校正${track.title}的BPM`}
+          aria-label={`重新识别${track.title}的鼓点`}
         >
-          <Pencil size={11} />
-          {bpm === null ? "填写 BPM" : "手动校正"}
+          {operation === "analyzing" ? (
+            <LoaderCircle size={18} className="spin" />
+          ) : (
+            <ScanLine size={18} />
+          )}
+          {operation === "analyzing" ? "识别中…" : "重新自动识别"}
         </button>
       </div>
       {operation === "analyzing" ? (
-        <p className="tempo-status" role="status">
-          <LoaderCircle size={12} className="spin" />
-          正在分析曲目节奏…
+        <p className="auto-rhythm-status" role="status">
+          正在从音频中提取节奏与强拍起点…
         </p>
-      ) : status === "pending" ? (
-        <button
-          className="tempo-retry"
-          onClick={() => void retryAnalysis()}
-          disabled={busy}
-        >
-          重新分析节奏
-        </button>
-      ) : bpm === null ? (
-        <p className="tempo-status">无法可靠判断节奏，可手动填写 BPM。</p>
       ) : (
-        <p className={`tempo-confidence ${lowConfidence ? "uncertain" : ""}`}>
-          {tempo?.source === "manual" ? (
-            "已手动校正"
-          ) : (
-            <>
-              参考分数 {Math.round((tempo?.confidence ?? 0) * 100)}%
-              {lowConfidence ? " · 弱节奏，仅供参考" : " · 可按听感校正"}
-            </>
-          )}
-        </p>
+        <p className="auto-rhythm-status">{rhythmStatus}</p>
       )}
-
-      {manualOpen && (
-        <form
-          className="manual-tempo-form"
-          onSubmit={(event) => void saveTempo(event)}
+      <div className="auto-rhythm-actions">
+        <div>
+          <strong>目标 {cadence} 步／分钟</strong>
+          <span>适配音乐速度时保持音高</span>
+        </div>
+        <button
+          className="adapt-button"
+          onClick={() => void adapt()}
+          disabled={!reference || busy}
+          aria-label={`制作${track.title}的适配版`}
         >
-          <label htmlFor={`bpm-${entryId}`}>BPM</label>
-          <input
-            id={`bpm-${entryId}`}
-            type="number"
-            min="30"
-            max="480"
-            step="any"
-            required
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="30–480"
-            disabled={busy}
-          />
-          <button
-            className="tempo-save"
-            type="submit"
-            disabled={busy}
-            aria-label={`保存${track.title}的BPM`}
-          >
-            {operation === "saving" ? (
-              <LoaderCircle size={13} className="spin" />
-            ) : (
-              <Check size={13} />
-            )}
-          </button>
-          <button
-            className="icon-button"
-            type="button"
-            disabled={busy}
-            onClick={() => setManualOpen(false)}
-            aria-label="取消 BPM 校正"
-          >
-            <X size={13} />
-          </button>
-        </form>
-      )}
-
-      {references.length > 0 && (
-        <>
-          <div className="reference-heading">
-            步频参考<span>步 / 分钟</span>
-          </div>
-          <div
-            className="cadence-references"
-            role="radiogroup"
-            aria-label={`${track.title}的步频参考`}
-          >
-            {references.map((candidate) => (
-              <label
-                className={
-                  candidate.multiplier === reference?.multiplier
-                    ? "selected"
-                    : ""
-                }
-                key={candidate.multiplier}
-                title={candidate.description}
-              >
-                <input
-                  className="sr-only"
-                  type="radio"
-                  name={`reference-${entryId}`}
-                  aria-label={`${candidate.label} ${formatTempo(candidate.cadence)} 步/分`}
-                  checked={candidate.multiplier === reference?.multiplier}
-                  onChange={() => setSelectedMultiplier(candidate.multiplier)}
-                  disabled={busy}
-                />
-                <span>{candidate.label}</span>
-                <strong>{formatTempo(candidate.cadence)}</strong>
-              </label>
-            ))}
-          </div>
-          <div className="adapt-controls">
-            <span>
-              {reference?.description}
-              <small>目标 {cadence} 步/分 · 保持音高</small>
-            </span>
-            <button
-              className="adapt-button"
-              onClick={() => void adapt()}
-              disabled={busy}
-              aria-label={`制作${track.title}的适配版`}
-            >
-              {operation === "adapting" ? (
-                <LoaderCircle size={13} className="spin" />
-              ) : (
-                <WandSparkles size={13} />
-              )}
-              <span>
-                {operation === "adapting" ? "制作中…" : "制作适配版"}
-                <small>{speed?.toFixed(2)}×</small>
-              </span>
-            </button>
-          </div>
-        </>
-      )}
-
+          {operation === "adapting" ? (
+            <LoaderCircle size={18} className="spin" />
+          ) : (
+            <WandSparkles size={18} />
+          )}
+          {operation === "adapting" ? "制作中…" : "适配当前步频"}
+        </button>
+      </div>
       {track.adaptation && (
         <div className="adaptation-result">
           <span>
-            变速版 · 总倍率 {track.adaptation.speed.toFixed(2)}× ·{" "}
-            {formatTime(track.duration)}
+            已制作 {track.adaptation.target_cadence} 步／分钟适配版 · {formatTime(track.duration)}
           </span>
           <button
             onClick={() => void restore()}
@@ -347,19 +204,22 @@ export default function TrackTempo({
             aria-label={`恢复${track.title}的原版`}
           >
             {operation === "restoring" ? (
-              <LoaderCircle size={11} className="spin" />
+              <LoaderCircle size={16} className="spin" />
             ) : (
-              <RotateCcw size={11} />
+              <RotateCcw size={16} />
             )}
             恢复原版
           </button>
         </div>
       )}
-      {error && (
-        <p className="tempo-error" role="alert">
-          {error}
-        </p>
-      )}
+      <a
+        className="secondary-button open-alignment"
+        href={`#/track/${encodeURIComponent(entryId)}/align`}
+      >
+        <AudioLines size={19} />
+        进入可视化校准
+      </a>
+      {error && <p className="tempo-error" role="alert">{error}</p>}
     </div>
   );
 }
