@@ -3,6 +3,7 @@ import type { ChangeEvent, CSSProperties, DragEvent, FormEvent } from "react";
 import {
   ArrowDown,
   ArrowDownToLine,
+  ArrowLeft,
   ArrowRight,
   ArrowUp,
   AudioLines,
@@ -13,11 +14,15 @@ import {
   FolderOpen,
   Github,
   Headphones,
+  Library,
+  ListMusic,
   Link,
   LoaderCircle,
+  Menu,
   Minus,
   Music2,
   Pause,
+  Palette,
   Play,
   Plus,
   Search,
@@ -52,6 +57,9 @@ import {
   toggleHalfBeatOffset,
 } from "./project";
 import type { PlaylistEntry } from "./project";
+import { AppearancePage, useAppearance, Wallpaper } from "./Appearance";
+import { PAGE_TITLES, parseRoute, routeHash } from "./routing";
+import type { AppRoute } from "./routing";
 
 const STORAGE_KEY = "stridemix.project.v1";
 const FALLBACK_TONES: Tone[] = [
@@ -68,6 +76,10 @@ interface ExportSnapshot {
   toneName: string;
   duration: number;
   format: "mp3" | "wav";
+  trackCount: number;
+  bgmVolume: number;
+  beatVolume: number;
+  gapSeconds: number;
 }
 
 function readProject() {
@@ -259,6 +271,13 @@ function TrackPhase({
 
 export default function App() {
   const [saved] = useState(readProject);
+  const [route, setRoute] = useState(() =>
+    parseRoute(window.location.hash, !!saved?.trackIds.length),
+  );
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const { appearance, updateAppearance } = useAppearance();
+  const [libraryTracks, setLibraryTracks] = useState<Track[]>([]);
+  const [libraryQuery, setLibraryQuery] = useState("");
   const [settings, setSettings] = useState<MixSettings>(
     saved?.settings ?? DEFAULT_SETTINGS,
   );
@@ -304,7 +323,6 @@ export default function App() {
   const playOperation = useRef(0);
   const previousGap = useRef(settings.gapSeconds);
   const latestEntries = useRef(entries);
-  const importRef = useRef<HTMLElement>(null);
   const timeline = useMemo(
     () => buildTimeline(tracks, settings.gapSeconds),
     [tracks, settings.gapSeconds],
@@ -312,6 +330,22 @@ export default function App() {
   const totalDuration = timeline.durationFrames / SAMPLE_RATE;
   const exportActive = job?.status === "processing" || job?.status === "queued";
   const selectedTone = tones.find((tone) => tone.id === settings.tone);
+
+  useEffect(() => {
+    function syncRoute() {
+      setRoute(parseRoute(window.location.hash, !!saved?.trackIds.length));
+      setNavigationOpen(false);
+    }
+    const initial = parseRoute(window.location.hash, !!saved?.trackIds.length);
+    window.history.replaceState(null, "", routeHash(initial));
+    window.addEventListener("hashchange", syncRoute);
+    return () => window.removeEventListener("hashchange", syncRoute);
+  }, [saved]);
+
+  useEffect(() => {
+    document.title = `${PAGE_TITLES[route.page]} · StrideMix`;
+    window.scrollTo(0, 0);
+  }, [route]);
 
   useEffect(() => {
     const preview = new PreviewEngine(setPlayback, setError);
@@ -326,6 +360,7 @@ export default function App() {
         if (!active) return;
         setHealth(status);
         setTones(availableTones);
+        setLibraryTracks(library);
         const restored = saved ? restoreEntries(saved, library) : [];
         setEntries(restored);
         setReady(true);
@@ -388,6 +423,12 @@ export default function App() {
 
   const handleTrackUpdate = useCallback((updated: Track) => {
     setEntries((current) => updateSharedTrack(current, updated));
+    setLibraryTracks((current) => {
+      const exists = current.some((track) => track.id === updated.id);
+      return exists
+        ? current.map((track) => track.id === updated.id ? updated : track)
+        : [updated, ...current];
+    });
   }, []);
 
   useEffect(() => {
@@ -479,6 +520,7 @@ export default function App() {
           method: "POST",
           body: form,
         });
+        handleTrackUpdate(track);
         setEntries((current) => [...current, createEntry(track)]);
         added += 1;
       }
@@ -493,6 +535,7 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ url: value }),
       });
+      handleTrackUpdate(track);
       setEntries((current) => [...current, createEntry(track)]);
       setUrl("");
       setNotice("配乐已加入编排");
@@ -519,6 +562,7 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ prompt: prompt.trim(), duration: aiDuration }),
       });
+      handleTrackUpdate(track);
       setEntries((current) => [...current, createEntry(track)]);
       setNotice("AI 配乐已加入编排");
     });
@@ -548,7 +592,7 @@ export default function App() {
       const analyzed = results.filter((track) => track !== null);
       if (analyzed.length) {
         const byId = new Map(analyzed.map((track) => [track.id, track]));
-        setEntries((current) => analyzed.reduce(updateSharedTrack, current));
+        analyzed.forEach(handleTrackUpdate);
         const currentEntries = latestEntries.current;
         engine.current?.setTracks(
           currentEntries.map((entry) => byId.get(entry.track.id) ?? entry.track),
@@ -624,6 +668,10 @@ export default function App() {
         parameters.tone,
       duration: totalDuration,
       format: parameters.format,
+      trackCount: parameters.tracks.length,
+      bgmVolume: parameters.bgm_volume,
+      beatVolume: parameters.beat_volume,
+      gapSeconds: parameters.gap_seconds,
     };
     try {
       const result = await request<ExportJob>("/api/exports", {
@@ -668,590 +716,992 @@ export default function App() {
     0,
   );
 
+  const filteredLibrary = libraryTracks.filter((track) =>
+    `${track.title} ${track.source}`.toLocaleLowerCase().includes(libraryQuery.trim().toLocaleLowerCase()),
+  );
+  const selectedEntry = route.page === "track"
+    ? entries.find((entry) => entry.entryId === route.entryId)
+    : undefined;
+  const activeNavigation = route.page === "track" ? "mix" : route.page;
+  const navigation = [
+    { page: "library", icon: Library },
+    { page: "import", icon: Plus },
+    { page: "mix", icon: ListMusic },
+    { page: "rhythm", icon: AudioLines },
+    { page: "export", icon: ArrowDownToLine },
+    { page: "appearance", icon: Palette },
+  ] as const;
+  const descriptions: Record<AppRoute["page"], string> = {
+    library: "保存在这台电脑的音乐，随时加入新的编排。",
+    import: "从文件、链接、歌曲搜索或 AI 配乐开始。导入后自动加入曲库与编排。",
+    mix: "调整播放顺序，进入单曲调试，让每一段音乐衔接你的步伐。",
+    rhythm: "设定每分钟步数，试听音色，分别调整音乐与节拍音量。",
+    track: "校正 BPM、制作适配版，并按听感微调这一条配乐的起拍。",
+    export: "核对编排与混音设置，合成为可以离线播放的跑步配乐。",
+    appearance: "选择适合你的背景、明暗和字号。",
+  };
+
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label="StrideMix 首页">
-          <span className="brand-mark" aria-hidden="true">
+    <div
+      className="studio-shell"
+      data-theme={appearance.colorMode}
+      data-text-size={appearance.textSize}
+    >
+      <Wallpaper settings={appearance} />
+      {navigationOpen && (
+        <button
+          className="sidebar-backdrop"
+          onClick={() => setNavigationOpen(false)}
+          aria-label="关闭导航"
+        />
+      )}
+      <aside
+        className={`sidebar ${navigationOpen ? "is-open" : ""}`}
+        aria-label="主导航"
+      >
+        <a
+          className="brand"
+          href="#/library"
+          aria-label="StrideMix 曲库"
+        >
+          <span
+            className="brand-mark"
+            aria-hidden="true"
+          >
             <i />
             <i />
             <i />
             <i />
           </span>
           <span>
-            STRIDE<span className="brand-light">MIX</span>
-            <small>跑步混音台</small>
+            STRIDE
+            <span className="brand-light">
+              MIX
+            </span>
+            <small>
+              跑步配乐工作台
+            </small>
           </span>
         </a>
-        <div className="header-actions">
+        <nav
+          className="sidebar-nav"
+          aria-label="工作台页面"
+        >
+          {navigation.map(({ page, icon: Icon }) => (
+            <a
+              key={page}
+              href={`#/${page}`}
+              className={`nav-link ${activeNavigation === page ? "active" : ""}`}
+              aria-current={activeNavigation === page ? "page" : undefined}
+              onClick={() => setNavigationOpen(false)}
+            >
+              <Icon size={22} />
+              <span>
+                {PAGE_TITLES[page]}
+              </span>
+              {page === "mix" && entries.length > 0 &&
+                <span className="nav-count">
+                  {entries.length}
+                </span>
+              }
+              {page === "export" && exportActive &&
+                <LoaderCircle
+                  size={17}
+                  className="spin"
+                />
+              }
+            </a>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
           <span className={`connection ${health ? "online" : ""}`}>
             <i />
-            {health ? "本地工作台" : "连接中"}
+            {health ? "本地服务已连接" : "正在连接本地服务"}
           </span>
+          <p className="local-storage-note">
+            素材保存在这台电脑，编排自动保存。
+          </p>
           <button
             className="text-button help-button"
             onClick={() => setHelpOpen(true)}
           >
-            <CircleHelp size={16} />
+            <CircleHelp size={19} />
             使用指南
           </button>
           <a
-            className="icon-button github-link"
+            className="text-button"
             href="https://github.com/Jocelyn-2005/stridemix"
             target="_blank"
             rel="noreferrer"
-            aria-label="GitHub 开源项目"
           >
-            <Github size={20} />
+            <Github size={19} />
+            开源项目
+            <ExternalLink size={15} />
           </a>
         </div>
-      </header>
-
-      <main>
-        <section className="page-heading">
-          <div>
-            <h1>
-              制作你的跑步配乐<span className="heading-dot">.</span>
-            </h1>
-          </div>
-          <div className="project-summary">
-            <span>
-              <strong>{tracks.length.toString().padStart(2, "0")}</strong>条配乐
-            </span>
-            <i />
-            <span>
-              <strong>{formatTime(totalDuration)}</strong>总时长
-            </span>
-          </div>
-        </section>
-
-        <div className="workspace">
-          <aside className="cadence-panel panel">
-            <div className="section-title">
-              <span className="title-icon">
-                <AudioLines size={18} />
-              </span>
-              <h2>设定步频</h2>
-            </div>
-            <div
-              className={`cadence-display ${playback.playing ? "running" : ""}`}
+      </aside>
+      <main
+        className="workspace-main"
+        id="main-content"
+      >
+        <header className="workspace-header">
+          <div className="header-leading">
+            <button
+              className="icon-button mobile-menu-button"
+              onClick={() => setNavigationOpen((open) => !open)}
+              aria-label="打开导航"
+              aria-expanded={navigationOpen}
             >
-              <label htmlFor="cadence-input" className="sr-only">
-                每分钟步频
-              </label>
-              <input
-                id="cadence-input"
-                aria-label="每分钟步频"
-                className="cadence-number"
-                type="number"
-                min="60"
-                max="240"
-                value={cadenceDraft}
-                onChange={(event) => setCadenceDraft(event.target.value)}
-                onBlur={commitCadence}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    commitCadence();
-                    event.currentTarget.blur();
-                  }
-                }}
-              />
-              <div className="cadence-unit">步 / 分钟</div>
-              <div className="pulse-row" aria-hidden="true">
-                {[0, 1, 2, 3].map((index) => (
-                  <i
-                    className={
-                      playback.playing && playback.pulse % 4 === index
-                        ? "lit"
-                        : ""
-                    }
-                    key={index}
-                  />
-                ))}
-              </div>
-            </div>
-            <div className="cadence-adjust">
-              <button
-                className="icon-button"
-                onClick={() =>
-                  changeSetting("cadence", Math.max(60, settings.cadence - 1))
-                }
-                disabled={settings.cadence <= 60}
-                aria-label="步频减少 1"
-              >
-                <Minus size={16} />
-              </button>
-              <input
-                type="range"
-                min="60"
-                max="240"
-                step="1"
-                aria-label="步频滑块"
-                value={settings.cadence}
-                onChange={(event) =>
-                  changeSetting("cadence", Number(event.target.value))
-                }
-                style={
-                  {
-                    "--fill": `${(settings.cadence - 60) / 1.8}%`,
-                  } as CSSProperties
-                }
-              />
-              <button
-                className="icon-button"
-                onClick={() =>
-                  changeSetting("cadence", Math.min(240, settings.cadence + 1))
-                }
-                disabled={settings.cadence >= 240}
-                aria-label="步频增加 1"
-              >
-                <Plus size={16} />
-              </button>
-            </div>
-            <div className="cadence-presets">
-              {[150, 165, 180].map((cadence) => (
-                <button
-                  className={settings.cadence === cadence ? "selected" : ""}
-                  key={cadence}
-                  onClick={() => changeSetting("cadence", cadence)}
-                >
-                  {cadence}
-                </button>
-              ))}
-            </div>
-            <div className="panel-divider" />
-            <div className="subheading">
-              <h3>节拍音色</h3>
-              <span>点击试听</span>
-            </div>
-            <div className="tone-list">
-              {tones.map((tone) => (
-                <button
-                  key={tone.id}
-                  className={`tone-option ${settings.tone === tone.id ? "selected" : ""}`}
-                  onClick={() => void audition(tone.id)}
-                  disabled={!ready}
-                  aria-label={`试听${tone.name}`}
-                  aria-pressed={settings.tone === tone.id}
-                >
-                  <span className="tone-symbol">
-                    <AudioLines size={17} />
-                  </span>
-                  <span className="tone-copy">
-                    <strong>{tone.name}</strong>
-                    <small>{tone.description}</small>
-                  </span>
-                  <span className="tone-radio">
-                    {settings.tone === tone.id && (
-                      <Check size={11} strokeWidth={3} />
-                    )}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <div className="cadence-footnote">
-              <Headphones size={15} />
-              <span>一步一响，每曲按起拍独立对齐。</span>
-            </div>
-          </aside>
-
-          <section className="playlist-panel panel">
-            <div className="playlist-header">
-              <div className="section-title">
-                <span className="title-icon">
-                  <Music2 size={18} />
-                </span>
-                <h2>配乐编排</h2>
-                <span className="count-label">{tracks.length}</span>
-              </div>
-              <button
-                className="text-button add-music"
-                onClick={() => {
-                  setMode("upload");
-                  importRef.current?.scrollIntoView({
-                    behavior: "smooth",
-                    block: "center",
-                  });
-                  fileInput.current?.click();
-                }}
-                disabled={!ready || !!busy}
-              >
-                <Plus size={16} />
-                添加配乐
-              </button>
-            </div>
-            <div className="playlist-description">
-              <span>音乐按顺序播放</span>
-              <span>时长</span>
-            </div>
-            <label className="gap-control" htmlFor="track-gap">
-              <span>
-                曲间间隙
-                <small>间隙内音乐与节拍静音</small>
+              <Menu size={23} />
+            </button>
+            <nav
+              className="breadcrumb"
+              aria-label="当前位置"
+            >
+              <a href="#/library">
+                工作台
+              </a>
+              <span aria-hidden="true">
+                /
               </span>
-              <input
-                id="track-gap"
-                type="number"
-                min="0"
-                max="30"
-                step="any"
-                value={gapDraft}
-                onChange={(event) => setGapDraft(event.target.value)}
-                onBlur={commitGap}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    commitGap();
-                    event.currentTarget.blur();
-                  }
-                }}
-              />
-              <span>秒</span>
-            </label>
-            <div className="track-list">
-              {!tracks.length && (
-                <div className="empty-playlist">
-                  <div className="empty-wave" aria-hidden="true">
-                    {[
-                      14, 24, 38, 54, 32, 66, 42, 24, 40, 56, 30, 18, 36, 26,
-                      12,
-                    ].map((height, index) => (
-                      <i style={{ height }} key={index} />
+              {route.page === "track" &&
+                <>
+                  <a href="#/mix">
+                    配乐编排
+                  </a>
+                  <span aria-hidden="true">
+                    /
+                  </span>
+                </>
+              }
+              <span aria-current="page">
+                {PAGE_TITLES[route.page]}
+              </span>
+            </nav>
+          </div>
+          <div className="header-actions">
+            <span className="header-project-meta">
+              {tracks.length} 条配乐 · {formatTime(totalDuration)}
+            </span>
+            <a
+              className="secondary-button"
+              href="#/import"
+            >
+              <Plus size={18} />
+              添加音乐
+            </a>
+          </div>
+        </header>
+        <div className="page-content">
+          <section className="page-heading">
+            <div>
+              <h1>
+                {PAGE_TITLES[route.page]}
+              </h1>
+              <p className="page-description">
+                {descriptions[route.page]}
+              </p>
+            </div>
+            <div className="page-actions">
+              {route.page === "library" &&
+                <a
+                  className="primary-button"
+                  href="#/mix"
+                >
+                  <ListMusic size={19} />
+                  查看编排{entries.length > 0 && ` · ${entries.length}`}
+                </a>
+              }
+              {(route.page === "rhythm" || route.page === "track" || route.page === "export") &&
+                <a
+                  className="secondary-button"
+                  href="#/mix"
+                >
+                  <ArrowLeft size={18} />
+                  返回编排
+                </a>
+              }
+              {route.page === "mix" &&
+                <a
+                  className="primary-button"
+                  href="#/export"
+                >
+                  <ArrowDownToLine size={19} />
+                  前往导出
+                </a>
+              }
+            </div>
+          </section>
+          {route.page === "library" && (
+            <section
+              className="library-page"
+              aria-label="本地音乐曲库"
+            >
+              <div className="library-toolbar toolbar">
+                <label
+                  className="search-field"
+                  htmlFor="library-search"
+                >
+                  <Search size={21} />
+                  <input
+                    id="library-search"
+                    type="search"
+                    placeholder="搜索名称或来源"
+                    value={libraryQuery}
+                    onChange={(event) => setLibraryQuery(event.target.value)}
+                  />
+                </label>
+                <span className="library-count">
+                  {filteredLibrary.length} 条素材
+                </span>
+              </div>
+              {!ready ?
+                <div
+                  className="empty-state glass-panel"
+                  role="status"
+                >
+                  <LoaderCircle
+                    size={32}
+                    className="spin"
+                  />
+                  <h2>
+                    正在读取曲库
+                  </h2>
+                  <p>
+                    连接本地服务并恢复编排。
+                  </p>
+                </div>
+                : libraryTracks.length === 0 ? (
+                  <div className="empty-state glass-panel">
+                    <Library size={42} />
+                    <h2>
+                      把第一首音乐加入曲库
+                    </h2>
+                    <p>
+                      上传音频或视频文件，也可以从链接、歌名搜索和 AI 配乐导入。
+                    </p>
+                    <a
+                      className="primary-button"
+                      href="#/import"
+                    >
+                      <Plus size={20} />
+                      添加音乐
+                    </a>
+                  </div>
+                ) : filteredLibrary.length === 0 ? (
+                  <div className="empty-state glass-panel">
+                    <Search size={34} />
+                    <h2>
+                      没有找到匹配的音乐
+                    </h2>
+                    <p>
+                      试试其他名称或来源。
+                    </p>
+                    <button
+                      className="secondary-button"
+                      onClick={() => setLibraryQuery("")}
+                    >
+                      清空搜索
+                    </button>
+                  </div>
+                ) : (
+                  <div className="library-grid">
+                    {filteredLibrary.map((track) => (
+                      <article
+                        className="library-card glass-panel"
+                        key={track.id}
+                      >
+                        <div className={`library-art ${track.adaptation ? "is-adapted" : ""}`}>
+                          <Music2 size={28} />
+                          <Waveform values={track.waveform} />
+                        </div>
+                        <div className="library-card-copy">
+                          <h2 title={track.title}>
+                            {track.title}
+                          </h2>
+                          <p>
+                            {track.source || "本地音频"}{track.adaptation ? " · 适配版" : ""}
+                          </p>
+                          <div className="library-card-meta">
+                            <span>
+                              {formatTime(track.duration)}
+                            </span>
+                            <span>
+                              {track.tempo?.bpm ? `${Number(track.tempo.bpm.toFixed(1))} BPM` : "BPM 待分析"}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          className="secondary-button"
+                          onClick={() => {
+                            setEntries((current) => [...current, createEntry(track)]);
+                            setNotice(`已将「${track.title}」加入编排`);
+                          }}
+                          aria-label={`将${track.title}加入编排`}
+                        >
+                          <Plus size={18} />
+                          加入编排
+                        </button>
+                      </article>
                     ))}
                   </div>
-                  <h3>你的跑步歌单，从这里开始</h3>
-                  <p>添加音乐后，试听完整的配乐与步频。</p>
-                </div>
-              )}
-              {entries.map(({ entryId, track, phaseOffsetMs }, index) => {
-                const start = timeline.tracks[index].startFrame / SAMPLE_RATE;
-                return (
-                  <article
-                    className={`track-row ${playback.playing && playback.activeIndex === index ? "is-playing" : ""}`}
-                    key={entryId}
-                    data-entry-id={entryId}
-                  >
+                )}
+            </section>
+          )}
+          {route.page === "import" && (
+            <div className="import-page">
+              <section className="import-section glass-panel">
+                <div
+                  className="import-tabs"
+                  role="tablist"
+                  aria-label="配乐来源"
+                >
+                  {(
+                    [
+                      { id: "upload", label: "本地文件", icon: FolderOpen },
+                      { id: "url", label: "视频链接", icon: Link },
+                      { id: "search", label: "搜索歌曲", icon: Search },
+                      { id: "ai", label: "AI 配乐", icon: Sparkles },
+                    ] as const
+                  ).map(({ id, label, icon: Icon }) => (
                     <button
-                      className="track-number"
-                      onClick={() => seekPlayback(start)}
-                      aria-label={`跳转到${track.title}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={mode === id}
+                      aria-controls="import-content"
+                      id={`tab-${id}`}
+                      className={mode === id ? "active" : ""}
+                      key={id}
+                      onClick={() => setMode(id)}
                     >
-                      {playback.playing && playback.activeIndex === index ? (
-                        <AudioLines size={18} />
-                      ) : (
-                        String(index + 1).padStart(2, "0")
-                      )}
+                      <Icon size={15} />
+                      <span>
+                        {label}
+                      </span>
                     </button>
-                    <div className="track-details">
-                      <div className="track-title-row">
-                        <h3 title={track.title}>{track.title}</h3>
-                        <span>{formatTime(track.duration)}</span>
-                      </div>
-                      <div className="track-meta">
-                        <span>{track.source || "本地音频"}</span>
-                        <span>{formatTime(start)} 开始</span>
-                      </div>
-                      <Waveform
-                        values={track.waveform}
-                        active={
-                          playback.activeIndex === index && playback.playing
-                        }
-                      />
-                      <TrackTempo
-                        track={track}
-                        entryId={entryId}
-                        cadence={settings.cadence}
-                        onTrackUpdate={handleTrackUpdate}
-                        onReplace={(updated) =>
-                          setEntries((current) =>
-                            replaceEntryTrack(
-                              current,
-                              entryId,
-                              track.id,
-                              updated,
-                            ),
-                          )
-                        }
-                      />
-                      <TrackPhase
-                        track={track}
-                        entryId={entryId}
-                        offsetMs={phaseOffsetMs}
-                        cadence={settings.cadence}
-                        onChange={(offset) =>
-                          setEntries((current) => current.map((entry) =>
-                            entry.entryId === entryId
-                              ? { ...entry, phaseOffsetMs: offset }
-                              : entry,
-                          ))
-                        }
-                      />
-                    </div>
-                    <div className="track-actions">
-                      <button
-                        className="icon-button"
-                        disabled={index === 0}
-                        onClick={() => moveTrack(index, -1)}
-                        aria-label={`上移${track.title}`}
-                      >
-                        <ArrowUp size={14} />
-                      </button>
-                      <button
-                        className="icon-button"
-                        disabled={index === tracks.length - 1}
-                        onClick={() => moveTrack(index, 1)}
-                        aria-label={`下移${track.title}`}
-                      >
-                        <ArrowDown size={14} />
-                      </button>
-                      <button
-                        className="icon-button remove-track"
-                        onClick={() => removeTrack(entryId)}
-                        aria-label={`移除${track.title}`}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-
-            <section className="import-section" ref={importRef}>
-              <div className="import-tabs" role="tablist" aria-label="配乐来源">
-                {(
-                  [
-                    { id: "upload", label: "本地文件", icon: FolderOpen },
-                    { id: "url", label: "视频链接", icon: Link },
-                    { id: "search", label: "搜索歌曲", icon: Search },
-                    { id: "ai", label: "AI 配乐", icon: Sparkles },
-                  ] as const
-                ).map(({ id, label, icon: Icon }) => (
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={mode === id}
-                    aria-controls="import-content"
-                    id={`tab-${id}`}
-                    className={mode === id ? "active" : ""}
-                    key={id}
-                    onClick={() => setMode(id)}
-                  >
-                    <Icon size={15} />
-                    <span>{label}</span>
-                  </button>
-                ))}
-              </div>
-              <input
-                ref={fileInput}
-                type="file"
-                className="sr-only"
-                aria-label="选择音频或视频文件"
-                multiple
-                accept="audio/*,video/*,.m4a,.flac,.ogg,.opus,.aiff,.wma,.mkv"
-                disabled={!ready || !!busy}
-                onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                  if (event.target.files) void uploadFiles(event.target.files);
-                }}
-              />
-              <div
-                className="import-content"
-                id="import-content"
-                role="tabpanel"
-                aria-labelledby={`tab-${mode}`}
-              >
-                {mode === "upload" && (
-                  <button
-                    className={`dropzone ${dragOver ? "drag-over" : ""}`}
-                    disabled={!ready || !!busy}
-                    onClick={() => fileInput.current?.click()}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      setDragOver(true);
-                    }}
-                    onDragLeave={() => setDragOver(false)}
-                    onDrop={handleDrop}
-                  >
-                    <span className="upload-icon">
-                      <Upload size={21} />
-                    </span>
-                    <strong>
-                      拖入文件，或<span>点击选择</span>
-                    </strong>
-                    <small>支持 MP3、WAV、FLAC、M4A 及视频文件</small>
-                  </button>
-                )}
-                {mode === "url" && (
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      if (url.trim()) void importUrl(url.trim());
-                    }}
-                    className="source-form"
-                  >
-                    <label htmlFor="video-url">粘贴视频或音频链接</label>
-                    <div className="input-action">
-                      <input
-                        id="video-url"
-                        type="url"
-                        required
-                        placeholder="https://www.youtube.com/watch?v=…"
-                        value={url}
-                        onChange={(event) => setUrl(event.target.value)}
-                      />
-                      <button
-                        className="small-primary"
-                        disabled={!ready || !!busy || !url.trim()}
-                      >
-                        <ArrowRight size={18} />
-                        <span className="sr-only">导入链接</span>
-                      </button>
-                    </div>
-                    <p>
-                      提取链接中的音轨，站点可用性取决于 yt-dlp 支持与网络环境。
-                    </p>
-                  </form>
-                )}
-                {mode === "search" && (
-                  <div>
+                  ))}
+                </div>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  className="sr-only"
+                  aria-label="选择音频或视频文件"
+                  multiple
+                  accept="audio/*,video/*,.m4a,.flac,.ogg,.opus,.aiff,.wma,.mkv"
+                  disabled={!ready || !!busy}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                    if (event.target.files) void uploadFiles(event.target.files);
+                  }}
+                />
+                <div
+                  className="import-content"
+                  id="import-content"
+                  role="tabpanel"
+                  aria-labelledby={`tab-${mode}`}
+                >
+                  {mode === "upload" && (
+                    <button
+                      className={`dropzone ${dragOver ? "drag-over" : ""}`}
+                      disabled={!ready || !!busy}
+                      onClick={() => fileInput.current?.click()}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setDragOver(true);
+                      }}
+                      onDragLeave={() => setDragOver(false)}
+                      onDrop={handleDrop}
+                    >
+                      <span className="upload-icon">
+                        <Upload size={21} />
+                      </span>
+                      <strong>
+                        拖入文件，或
+                        <span>
+                          点击选择
+                        </span>
+                      </strong>
+                      <small>
+                        支持 MP3、WAV、FLAC、M4A 及视频文件
+                      </small>
+                    </button>
+                  )}
+                  {mode === "url" && (
                     <form
-                      onSubmit={(event) => void search(event)}
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        if (url.trim()) void importUrl(url.trim());
+                      }}
                       className="source-form"
                     >
-                      <label htmlFor="song-query">输入歌名、歌手或关键词</label>
+                      <label htmlFor="video-url">
+                        粘贴视频或音频链接
+                      </label>
                       <div className="input-action">
                         <input
-                          id="song-query"
-                          placeholder="例如：夜空中最亮的星 逃跑计划"
-                          value={query}
-                          onChange={(event) => setQuery(event.target.value)}
+                          id="video-url"
+                          type="url"
+                          required
+                          placeholder="https://www.youtube.com/watch?v=…"
+                          value={url}
+                          onChange={(event) => setUrl(event.target.value)}
                         />
                         <button
                           className="small-primary"
-                          disabled={!ready || !!busy || !query.trim()}
+                          disabled={!ready || !!busy || !url.trim()}
                         >
-                          <Search size={18} />
-                          <span className="sr-only">搜索歌曲</span>
+                          <ArrowRight size={18} />
+                          <span className="sr-only">
+                            导入链接
+                          </span>
                         </button>
                       </div>
-                      <p>通过 YouTube 搜索候选版本，确认后添加至编排。</p>
-                    </form>
-                    {results !== null && (
-                      <div className="search-results">
-                        {results.length === 0 && (
-                          <p className="no-results">
-                            没有找到结果，试试歌手名或更完整的歌名。
-                          </p>
-                        )}
-                        {results.map((result, index) => (
-                          <div
-                            className="search-result"
-                            key={`${result.url}-${index}`}
-                          >
-                            <span className="result-icon">
-                              <Music2 size={16} />
-                            </span>
-                            <div>
-                              <strong>{result.title}</strong>
-                              <small>
-                                {result.channel}{" "}
-                                {result.duration
-                                  ? `· ${formatTime(result.duration)}`
-                                  : ""}
-                              </small>
-                            </div>
-                            <button
-                              className="icon-button"
-                              disabled={!!busy}
-                              onClick={() => void importUrl(result.url)}
-                              aria-label={`添加${result.title}`}
-                            >
-                              <Plus size={18} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {mode === "ai" && (
-                  <form
-                    onSubmit={(event) => void generate(event)}
-                    className="source-form ai-form"
-                  >
-                    <label htmlFor="ai-prompt">描述你想要的跑步配乐</label>
-                    <textarea
-                      id="ai-prompt"
-                      placeholder="例如：轻快的电子器乐，温暖合成器，适合傍晚慢跑，无人声。"
-                      value={prompt}
-                      onChange={(event) => setPrompt(event.target.value)}
-                      maxLength={4100}
-                      rows={3}
-                    />
-                    <div className="ai-actions">
-                      <label htmlFor="ai-duration">
-                        时长{" "}
-                        <input
-                          id="ai-duration"
-                          aria-label="AI 配乐时长（秒）"
-                          type="number"
-                          min="3"
-                          max="600"
-                          required
-                          value={aiDuration}
-                          onChange={(event) =>
-                            setAiDuration(Number(event.target.value))
-                          }
-                        />{" "}
-                        秒
-                      </label>
-                      <button
-                        className="small-primary with-text"
-                        disabled={
-                          !ready ||
-                          !!busy ||
-                          !health?.ai_configured ||
-                          !prompt.trim()
-                        }
-                      >
-                        <Sparkles size={15} />
-                        生成配乐
-                      </button>
-                    </div>
-                    {!health?.ai_configured ? (
-                      <p className="ai-setup">
-                        在项目根目录的 .env 中设置
-                        ELEVENLABS_API_KEY，重启服务后即可使用。生成会消耗服务商额度。
-                      </p>
-                    ) : (
                       <p>
-                        使用 ElevenLabs 生成纯器乐配乐，会消耗你账户中的额度。
+                        提取链接中的音轨，站点可用性取决于 yt-dlp 支持与网络环境。
                       </p>
-                    )}
-                  </form>
-                )}
+                    </form>
+                  )}
+                  {mode === "search" && (
+                    <div>
+                      <form
+                        onSubmit={(event) => void search(event)}
+                        className="source-form"
+                      >
+                        <label htmlFor="song-query">
+                          输入歌名、歌手或关键词
+                        </label>
+                        <div className="input-action">
+                          <input
+                            id="song-query"
+                            placeholder="例如：夜空中最亮的星 逃跑计划"
+                            value={query}
+                            onChange={(event) => setQuery(event.target.value)}
+                          />
+                          <button
+                            className="small-primary"
+                            disabled={!ready || !!busy || !query.trim()}
+                          >
+                            <Search size={18} />
+                            <span className="sr-only">
+                              搜索歌曲
+                            </span>
+                          </button>
+                        </div>
+                        <p>
+                          通过 YouTube 搜索候选版本，确认后添加至编排。
+                        </p>
+                      </form>
+                      {results !== null && (
+                        <div className="search-results">
+                          {results.length === 0 && (
+                            <p className="no-results">
+                              没有找到结果，试试歌手名或更完整的歌名。
+                            </p>
+                          )}
+                          {results.map((result, index) => (
+                            <div
+                              className="search-result"
+                              key={`${result.url}-${index}`}
+                            >
+                              <span className="result-icon">
+                                <Music2 size={16} />
+                              </span>
+                              <div>
+                                <strong>
+                                  {result.title}
+                                </strong>
+                                <small>
+                                  {result.channel}{" "}
+                                  {result.duration
+                                    ? `· ${formatTime(result.duration)}`
+                                    : ""}
+                                </small>
+                              </div>
+                              <button
+                                className="icon-button"
+                                disabled={!!busy}
+                                onClick={() => void importUrl(result.url)}
+                                aria-label={`添加${result.title}`}
+                              >
+                                <Plus size={18} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {mode === "ai" && (
+                    <form
+                      onSubmit={(event) => void generate(event)}
+                      className="source-form ai-form"
+                    >
+                      <label htmlFor="ai-prompt">
+                        描述你想要的跑步配乐
+                      </label>
+                      <textarea
+                        id="ai-prompt"
+                        placeholder="例如：轻快的电子器乐，温暖合成器，适合傍晚慢跑，无人声。"
+                        value={prompt}
+                        onChange={(event) => setPrompt(event.target.value)}
+                        maxLength={4100}
+                        rows={3}
+                      />
+                      <div className="ai-actions">
+                        <label htmlFor="ai-duration">
+                          时长{" "}
+                          <input
+                            id="ai-duration"
+                            aria-label="AI 配乐时长（秒）"
+                            type="number"
+                            min="3"
+                            max="600"
+                            required
+                            value={aiDuration}
+                            onChange={(event) =>
+                              setAiDuration(Number(event.target.value))
+                            }
+                          />
+                          {" "}
+                          秒
+                        </label>
+                        <button
+                          className="small-primary with-text"
+                          disabled={
+                            !ready ||
+                            !!busy ||
+                            !health?.ai_configured ||
+                            !prompt.trim()
+                          }
+                        >
+                          <Sparkles size={15} />
+                          生成配乐
+                        </button>
+                      </div>
+                      {!health?.ai_configured ? (
+                        <p className="ai-setup">
+                          在项目根目录的 .env 中设置
+                          ELEVENLABS_API_KEY，重启服务后即可使用。生成会消耗服务商额度。
+                        </p>
+                      ) : (
+                        <p>
+                          使用 ElevenLabs 生成纯器乐配乐，会消耗你账户中的额度。
+                        </p>
+                      )}
+                    </form>
+                  )}
+                </div>
+              </section>
+              {!!busy && (
+                <div
+                  className="import-status"
+                  role="status"
+                >
+                  <LoaderCircle
+                    size={16}
+                    className="spin"
+                  />
+                  <span>
+                    {busy}
+                  </span>
+                </div>
+              )}
+              <div className="page-bottom-actions">
+                <a
+                  className="secondary-button"
+                  href="#/library"
+                >
+                  <Library size={19} />
+                  查看曲库
+                </a>
+                <a
+                  className="primary-button"
+                  href="#/mix"
+                >
+                  <ListMusic size={19} />
+                  查看编排 · {entries.length}
+                </a>
+              </div>
+            </div>
+          )}
+          {route.page === "mix" && (
+            <div className="mix-layout">
+              <section className="playlist-panel glass-panel">
+                <div className="section-heading">
+                  <div>
+                    <h2>
+                      播放顺序
+                    </h2>
+                    <p>
+                      {entries.length} 条配乐 · {formatTime(totalDuration)}
+                    </p>
+                  </div>
+                  <a
+                    className="secondary-button"
+                    href="#/library"
+                  >
+                    <Plus size={19} />
+                    从曲库添加
+                  </a>
+                </div>
+                <div className="track-list">
+                  {entries.length === 0 &&
+                    <div className="empty-state">
+                      <ListMusic size={38} />
+                      <h3>
+                        编排里还没有音乐
+                      </h3>
+                      <p>
+                        从曲库选择素材，或导入新的音乐。
+                      </p>
+                      <a
+                        className="primary-button"
+                        href="#/import"
+                      >
+                        <Plus size={19} />
+                        添加音乐
+                      </a>
+                    </div>
+                  }
+                  {entries.map(({ entryId, track, phaseOffsetMs }, index) => {
+                    const start = timeline.tracks[index].startFrame / SAMPLE_RATE;
+                    return (
+                      <article
+                        className={`track-row ${playback.playing && playback.activeIndex === index ? "is-playing" : ""}`}
+                        key={entryId}
+                        data-entry-id={entryId}
+                      >
+                        <button
+                          className="track-number"
+                          onClick={() => seekPlayback(start)}
+                          aria-label={`跳转到${track.title}`}
+                        >
+                          {playback.playing && playback.activeIndex === index ?
+                            <AudioLines size={21} />
+                            : String(index + 1).padStart(2, "0")}
+                        </button>
+                        <div className="track-details">
+                          <div className="track-title-row">
+                            <h3 title={track.title}>
+                              {track.title}
+                            </h3>
+                            <span>
+                              {formatTime(track.duration)}
+                            </span>
+                          </div>
+                          <div className="track-meta">
+                            <span>
+                              {track.source || "本地音频"}
+                            </span>
+                            <span>
+                              {formatTime(start)} 开始
+                            </span>
+                          </div>
+                          <div className="track-summary">
+                            <span>
+                              {track.tempo?.bpm ? `${Number(track.tempo.bpm.toFixed(1))} BPM` : "BPM 待分析"}
+                            </span>
+                            <span>
+                              {track.alignment?.anchor_seconds != null ? `起拍 ${track.alignment.anchor_seconds.toFixed(2)} 秒` : "起拍待确认"}
+                            </span>
+                            <span>
+                              微调 {Number(phaseOffsetMs.toFixed(2))} ms
+                            </span>
+                            {track.adaptation &&
+                              <span>
+                                适配版
+                              </span>
+                            }
+                          </div>
+                        </div>
+                        <div className="track-actions">
+                          <a
+                            className="secondary-button track-debug"
+                            href={routeHash({ page: "track", entryId })}
+                            aria-label={`调试${track.title}`}
+                          >
+                            <Settings2 size={17} />
+                            调试
+                          </a>
+                          <button
+                            className="icon-button"
+                            disabled={index === 0}
+                            onClick={() => moveTrack(index, -1)}
+                            aria-label={`上移${track.title}`}
+                          >
+                            <ArrowUp size={18} />
+                          </button>
+                          <button
+                            className="icon-button"
+                            disabled={index === tracks.length - 1}
+                            onClick={() => moveTrack(index, 1)}
+                            aria-label={`下移${track.title}`}
+                          >
+                            <ArrowDown size={18} />
+                          </button>
+                          <button
+                            className="icon-button remove-track"
+                            onClick={() => removeTrack(entryId)}
+                            aria-label={`移除${track.title}`}
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+                <label
+                  className="gap-control"
+                  htmlFor="track-gap"
+                >
+                  <span>
+                    曲间间隙
+                    <small>
+                      间隙内音乐与节拍静音
+                    </small>
+                  </span>
+                  <input
+                    id="track-gap"
+                    type="number"
+                    min="0"
+                    max="30"
+                    step="any"
+                    value={gapDraft}
+                    onChange={(event) => setGapDraft(event.target.value)}
+                    onBlur={commitGap}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        commitGap();
+                        event.currentTarget.blur();
+                      }
+                    }}
+                  />
+                  <span>
+                    秒
+                  </span>
+                </label>
+              </section>
+              <aside className="mix-overview glass-panel">
+                <div className="section-heading">
+                  <h2>
+                    当前配乐
+                  </h2>
+                </div>
+                <dl className="project-facts">
+                  <div>
+                    <dt>
+                      总时长
+                    </dt>
+                    <dd>
+                      {formatTime(totalDuration)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>
+                      目标步频
+                    </dt>
+                    <dd>
+                      {settings.cadence}
+                      <small>
+                        SPM
+                      </small>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>
+                      节拍音色
+                    </dt>
+                    <dd>
+                      {selectedTone?.name ?? "经典点击"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>
+                      节拍数量
+                    </dt>
+                    <dd>
+                      {beatCount.toLocaleString()} 次
+                    </dd>
+                  </div>
+                </dl>
+                <a
+                  className="secondary-button"
+                  href="#/rhythm"
+                >
+                  <AudioLines size={20} />
+                  节奏与混音
+                  <ArrowRight size={18} />
+                </a>
+                <a
+                  className="primary-button"
+                  href="#/export"
+                >
+                  <ArrowDownToLine size={20} />
+                  前往导出
+                </a>
+              </aside>
+            </div>
+          )}
+          <div className="rhythm-layout" hidden={route.page !== "rhythm"}>
+            <section className="cadence-panel glass-panel">
+              <div className="section-title">
+                <span className="title-icon">
+                  <AudioLines size={18} />
+                </span>
+                <h2>
+                  设定步频
+                </h2>
+              </div>
+              <div
+                className={`cadence-display ${playback.playing ? "running" : ""}`}
+              >
+                <label
+                  htmlFor="cadence-input"
+                  className="sr-only"
+                >
+                  每分钟步频
+                </label>
+                <input
+                  id="cadence-input"
+                  aria-label="每分钟步频"
+                  className="cadence-number"
+                  type="number"
+                  min="60"
+                  max="240"
+                  value={cadenceDraft}
+                  onChange={(event) => setCadenceDraft(event.target.value)}
+                  onBlur={commitCadence}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      commitCadence();
+                      event.currentTarget.blur();
+                    }
+                  }}
+                />
+                <div className="cadence-unit">
+                  步 / 分钟
+                </div>
+                <div
+                  className="pulse-row"
+                  aria-hidden="true"
+                >
+                  {[0, 1, 2, 3].map((index) => (
+                    <i
+                      className={
+                        playback.playing && playback.pulse % 4 === index
+                          ? "lit"
+                          : ""
+                      }
+                      key={index}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="cadence-adjust">
+                <button
+                  className="icon-button"
+                  onClick={() =>
+                    changeSetting("cadence", Math.max(60, settings.cadence - 1))
+                  }
+                  disabled={settings.cadence <= 60}
+                  aria-label="步频减少 1"
+                >
+                  <Minus size={16} />
+                </button>
+                <input
+                  type="range"
+                  min="60"
+                  max="240"
+                  step="1"
+                  aria-label="步频滑块"
+                  value={settings.cadence}
+                  onChange={(event) =>
+                    changeSetting("cadence", Number(event.target.value))
+                  }
+                  style={
+                    {
+                      "--fill": `${(settings.cadence - 60) / 1.8}%`,
+                    } as CSSProperties
+                  }
+                />
+                <button
+                  className="icon-button"
+                  onClick={() =>
+                    changeSetting("cadence", Math.min(240, settings.cadence + 1))
+                  }
+                  disabled={settings.cadence >= 240}
+                  aria-label="步频增加 1"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+              <div className="cadence-presets">
+                {[150, 165, 180].map((cadence) => (
+                  <button
+                    className={settings.cadence === cadence ? "selected" : ""}
+                    key={cadence}
+                    onClick={() => changeSetting("cadence", cadence)}
+                  >
+                    {cadence}
+                  </button>
+                ))}
+              </div>
+              <div className="panel-divider" />
+              <div className="subheading">
+                <h3>
+                  节拍音色
+                </h3>
+                <span>
+                  点击试听
+                </span>
+              </div>
+              <div className="tone-list">
+                {tones.map((tone) => (
+                  <button
+                    key={tone.id}
+                    className={`tone-option ${settings.tone === tone.id ? "selected" : ""}`}
+                    onClick={() => void audition(tone.id)}
+                    disabled={!ready}
+                    aria-label={`试听${tone.name}`}
+                    aria-pressed={settings.tone === tone.id}
+                  >
+                    <span className="tone-symbol">
+                      <AudioLines size={17} />
+                    </span>
+                    <span className="tone-copy">
+                      <strong>
+                        {tone.name}
+                      </strong>
+                      <small>
+                        {tone.description}
+                      </small>
+                    </span>
+                    <span className="tone-radio">
+                      {settings.tone === tone.id && (
+                        <Check
+                          size={11}
+                          strokeWidth={3}
+                        />
+                      )}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className="cadence-footnote">
+                <Headphones size={15} />
+                <span>
+                  一步一响，每曲按起拍独立对齐。
+                </span>
               </div>
             </section>
-            {!!busy && (
-              <div className="import-status" role="status">
-                <LoaderCircle size={16} className="spin" />
-                <span>{busy}</span>
-              </div>
-            )}
-            {tracks.length > 0 && (
-              <div className="playlist-total">
-                <span>{tracks.length} 条配乐 · 顺序拼接</span>
-                <strong>{formatTime(totalDuration)}</strong>
-              </div>
-            )}
-          </section>
-
-          <aside className="mix-column">
-            <section className="mixer-panel panel">
+            <section className="mixer-panel glass-panel">
               <div className="section-title">
                 <span className="title-icon">
                   <Settings2 size={18} />
                 </span>
-                <h2>混音控制</h2>
+                <h2>
+                  混音控制
+                </h2>
               </div>
               <VolumeControl
                 label="背景音乐"
@@ -1267,130 +1717,353 @@ export default function App() {
               />
               <div className="mix-note">
                 <Headphones size={15} />
-                <span>试听时可实时调整音量。</span>
+                <span>
+                  试听时可实时调整音量。
+                </span>
               </div>
             </section>
-            <section className="export-panel">
-              <div className="export-heading">
-                <ArrowDownToLine size={19} />
-                <h2>准备出发</h2>
-              </div>
-              <div className="export-stats">
-                <span>
-                  总时长<strong>{formatTime(totalDuration)}</strong>
-                </span>
-                <span>
-                  步频
-                  <strong>
-                    {settings.cadence}
-                    <small> SPM</small>
-                  </strong>
-                </span>
-              </div>
-              <div className="export-details">
-                <span>{selectedTone?.name ?? "经典点击"}</span>
-                <span>{beatCount.toLocaleString()} 次节拍</span>
-              </div>
-              <label htmlFor="export-format" className="format-label">
-                导出格式
-              </label>
-              <div className="format-selector">
-                <select
-                  id="export-format"
-                  aria-label="导出格式"
-                  value={format}
-                  onChange={(event) =>
-                    setFormat(event.target.value as "mp3" | "wav")
-                  }
-                  disabled={exportActive}
-                >
-                  <option value="mp3">MP3 · 轻巧随身听</option>
-                  <option value="wav">WAV · 无损音质</option>
-                </select>
-                <ChevronDown size={15} />
-              </div>
-              <button
-                className="export-button"
-                onClick={() => void startExport()}
-                disabled={
-                  !ready || !tracks.length || exportActive || exportStarting
-                }
-              >
-                {exportActive || exportStarting ? (
-                  <LoaderCircle size={17} className="spin" />
-                ) : (
-                  <ArrowDownToLine size={17} />
-                )}
-                {exportActive
-                  ? "正在合成配乐"
-                  : exportStarting
-                    ? "正在创建任务"
-                    : "合成并导出"}
-              </button>
-              {!tracks.length && (
-                <p className="export-hint">添加配乐后即可导出</p>
-              )}
-              {exportActive && job && (
-                <div className="export-progress" role="status">
-                  <div>
-                    <span>合成进度</span>
-                    <strong>{Math.round(job.progress)}%</strong>
-                  </div>
-                  <progress max="100" value={job.progress} />
-                  <button onClick={() => void cancelExport()}>取消导出</button>
-                  <p>导出使用开始时的编排与混音设置。</p>
+          </div>
+          {route.page === "track" && !ready && (
+            <div
+              className="empty-state glass-panel"
+              role="status"
+            >
+              <LoaderCircle
+                size={30}
+                className="spin"
+              />
+              <p>
+                正在恢复编排…
+              </p>
+            </div>
+          )}
+          {entries.map((entry, index) => (
+            <section
+              className="track-detail glass-panel"
+              key={entry.entryId}
+              hidden={route.page !== "track" || selectedEntry?.entryId !== entry.entryId}
+            >
+              <div className="track-detail-heading">
+                <div>
+                  <span className="detail-eyebrow">
+                    编排第 {index + 1} 条
+                  </span>
+                  <h2>
+                    {entry.track.title}
+                  </h2>
+                  <p>
+                    {entry.track.source || "本地音频"} · {formatTime(entry.track.duration)} · 从 {formatTime(timeline.tracks[index].startFrame / SAMPLE_RATE)} 开始
+                  </p>
                 </div>
-              )}
-              {job?.status === "completed" && job.download_url && (
-                <>
+                <button
+                  className="secondary-button"
+                  onClick={() => seekPlayback(timeline.tracks[index].startFrame / SAMPLE_RATE)}
+                >
+                  <SkipBack size={18} />
+                  定位到这首
+                </button>
+              </div>
+              <div className="track-detail-waveform">
+                <Waveform
+                  values={entry.track.waveform}
+                  active={playback.playing && playback.activeIndex === index}
+                />
+              </div>
+              <div className="detail-section">
+                <div className="section-heading">
+                  <h3>
+                    音乐节奏
+                  </h3>
                   <a
-                    className="download-button"
-                    href={job.download_url}
-                    download
+                    className="text-button"
+                    href="#/rhythm"
                   >
-                    <Check size={16} />
-                    下载跑步配乐
-                    <ArrowDownToLine size={15} />
+                    目标 {settings.cadence} SPM
+                    <ArrowRight size={17} />
                   </a>
-                  {exportSnapshot && (
-                    <p className="export-result-summary">
-                      本次导出 · {exportSnapshot.cadence} SPM ·{" "}
-                      {formatTime(exportSnapshot.duration)} ·{" "}
-                      {exportSnapshot.format.toUpperCase()}
-                      <br />
-                      {exportSnapshot.toneName}
-                    </p>
-                  )}
-                </>
-              )}
-              {job?.status === "cancelled" && (
-                <p className="export-hint">导出已取消，可以调整后重新导出。</p>
-              )}
-              {job?.status === "failed" && (
-                <p className="export-hint export-error">
-                  {job.error || "导出失败，请重试。"}
-                </p>
-              )}
+                </div>
+                <TrackTempo
+                  track={entry.track}
+                  entryId={entry.entryId}
+                  cadence={settings.cadence}
+                  onTrackUpdate={handleTrackUpdate}
+                  onReplace={(updated) => {
+                    handleTrackUpdate(updated);
+                    setEntries((current) =>
+                      replaceEntryTrack(current, entry.entryId, entry.track.id, updated),
+                    );
+                  }}
+                />
+              </div>
+              <div className="detail-section">
+                <div className="section-heading">
+                  <h3>
+                    节拍起点
+                  </h3>
+                </div>
+                <TrackPhase
+                  track={entry.track}
+                  entryId={entry.entryId}
+                  offsetMs={entry.phaseOffsetMs}
+                  cadence={settings.cadence}
+                  onChange={(offset) => setEntries((current) => current.map((candidate) =>
+                    candidate.entryId === entry.entryId
+                      ? { ...candidate, phaseOffsetMs: offset }
+                      : candidate,
+                  ))}
+                />
+              </div>
             </section>
-            <p className="local-storage-note">
-              <span className="local-dot" />
-              素材与项目保存在这台电脑
-            </p>
-          </aside>
-        </div>
-        <div className="workspace-footer">
-          <a
-            href="https://github.com/Jocelyn-2005/stridemix"
-            target="_blank"
-            rel="noreferrer"
-          >
-            开源项目
-            <ExternalLink size={12} />
-          </a>
+          ))}
+          {route.page === "track" && ready && !selectedEntry && (
+            <div className="empty-state glass-panel">
+              <Music2 size={38} />
+              <h2>
+                这条配乐已从编排中移除
+              </h2>
+              <p>
+                返回编排，选择需要调试的曲目。
+              </p>
+              <a
+                className="primary-button"
+                href="#/mix"
+              >
+                <ArrowLeft size={19} />
+                返回编排
+              </a>
+            </div>
+          )}
+          {route.page === "export" &&
+            <div className="export-layout">
+              <section className="export-panel glass-panel">
+                <div className="export-heading">
+                  <ArrowDownToLine size={19} />
+                  <h2>
+                    合成与导出
+                  </h2>
+                </div>
+                <div className="export-stats">
+                  <span>
+                    总时长
+                    <strong>
+                      {formatTime(totalDuration)}
+                    </strong>
+                  </span>
+                  <span>
+                    步频
+                    <strong>
+                      {settings.cadence}
+                      <small>
+                        SPM
+                      </small>
+                    </strong>
+                  </span>
+                </div>
+                <div className="export-details">
+                  <span>
+                    {selectedTone?.name ?? "经典点击"}
+                  </span>
+                  <span>
+                    {beatCount.toLocaleString()} 次节拍
+                  </span>
+                </div>
+                <label
+                  htmlFor="export-format"
+                  className="format-label"
+                >
+                  导出格式
+                </label>
+                <div className="format-selector">
+                  <select
+                    id="export-format"
+                    aria-label="导出格式"
+                    value={format}
+                    onChange={(event) =>
+                      setFormat(event.target.value as "mp3" | "wav")
+                    }
+                    disabled={exportActive}
+                  >
+                    <option value="mp3">
+                      MP3 · 压缩音频
+                    </option>
+                    <option value="wav">
+                      WAV · 无压缩音频
+                    </option>
+                  </select>
+                  <ChevronDown size={15} />
+                </div>
+                <button
+                  className="export-button"
+                  onClick={() => void startExport()}
+                  disabled={
+                    !ready || !tracks.length || exportActive || exportStarting
+                  }
+                >
+                  {exportActive || exportStarting ? (
+                    <LoaderCircle
+                      size={17}
+                      className="spin"
+                    />
+                  ) : (
+                    <ArrowDownToLine size={17} />
+                  )}
+                  {exportActive
+                    ? "正在合成配乐"
+                    : exportStarting
+                      ? "正在创建任务"
+                      : "合成并导出"}
+                </button>
+                {!tracks.length && (
+                  <p className="export-hint">
+                    添加配乐后即可导出
+                  </p>
+                )}
+                {exportActive && job && (
+                  <div
+                    className="export-progress"
+                    role="status"
+                  >
+                    <div>
+                      <span>
+                        合成进度
+                      </span>
+                      <strong>
+                        {Math.round(job.progress)}%
+                      </strong>
+                    </div>
+                    <progress
+                      max="100"
+                      value={job.progress}
+                    />
+                    <button onClick={() => void cancelExport()}>
+                      取消导出
+                    </button>
+                    <p>
+                      导出使用开始时的编排与混音设置。
+                    </p>
+                  </div>
+                )}
+                {job && exportSnapshot && (
+                  <section
+                    className="export-job-summary"
+                    aria-label="本次导出任务参数"
+                  >
+                    <h3>
+                      本次任务使用的参数
+                    </h3>
+                    <p>
+                      {exportSnapshot.trackCount} 条配乐 · {formatTime(exportSnapshot.duration)} ·{" "}
+                      {exportSnapshot.cadence} SPM · {exportSnapshot.format.toUpperCase()}
+                    </p>
+                    <p>
+                      {exportSnapshot.toneName} · 音乐 {Math.round(exportSnapshot.bgmVolume * 100)}% ·{" "}
+                      节拍 {Math.round(exportSnapshot.beatVolume * 100)}% · 间隙 {exportSnapshot.gapSeconds} 秒
+                    </p>
+                  </section>
+                )}
+                {job?.status === "completed" && job.download_url && (
+                  <>
+                    <a
+                      className="download-button"
+                      href={job.download_url}
+                      download
+                    >
+                      <Check size={16} />
+                      下载跑步配乐
+                      <ArrowDownToLine size={15} />
+                    </a>
+                  </>
+                )}
+                {job?.status === "cancelled" && (
+                  <p className="export-hint">
+                    导出已取消，可以调整后重新导出。
+                  </p>
+                )}
+                {job?.status === "failed" && (
+                  <p className="export-hint export-error">
+                    {job.error || "导出失败，请重试。"}
+                  </p>
+                )}
+              </section>
+              <section className="export-checklist glass-panel">
+                <div className="section-heading">
+                  <h2>
+                    当前编排参数
+                  </h2>
+                  <a
+                    className="text-button"
+                    href="#/mix"
+                  >
+                    编辑
+                    <ArrowRight size={17} />
+                  </a>
+                </div>
+                <dl className="project-facts">
+                  <div>
+                    <dt>
+                      配乐数量
+                    </dt>
+                    <dd>
+                      {entries.length} 条
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>
+                      音乐音量
+                    </dt>
+                    <dd>
+                      {Math.round(settings.bgmVolume * 100)}%
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>
+                      节拍音量
+                    </dt>
+                    <dd>
+                      {Math.round(settings.beatVolume * 100)}%
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>
+                      曲间间隙
+                    </dt>
+                    <dd>
+                      {settings.gapSeconds} 秒
+                    </dd>
+                  </div>
+                </dl>
+                <ol className="export-track-list">
+                  {entries.map((entry) =>
+                    <li key={entry.entryId}>
+                      <span>
+                        {entry.track.title}
+                      </span>
+                      <span>
+                        {formatTime(entry.track.duration)}
+                      </span>
+                    </li>
+                  )}
+                </ol>
+                {!entries.length &&
+                  <p>
+                    从曲库加入音乐后即可导出。
+                  </p>
+                }
+              </section>
+            </div>
+          }
+          {route.page === "appearance" &&
+            <AppearancePage
+              settings={appearance}
+              onChange={updateAppearance}
+            />
+          }
         </div>
       </main>
-
-      <section className="transport" aria-label="配乐试听">
+      <section
+        className="transport"
+        aria-label="配乐试听"
+      >
         <div className="transport-controls">
           <button
             className="icon-button reset-button"
@@ -1409,11 +2082,20 @@ export default function App() {
             }
           >
             {playPending ? (
-              <LoaderCircle size={21} className="spin" />
+              <LoaderCircle
+                size={21}
+                className="spin"
+              />
             ) : playback.playing ? (
-              <Pause size={22} fill="currentColor" />
+              <Pause
+                size={22}
+                fill="currentColor"
+              />
             ) : (
-              <Play size={21} fill="currentColor" />
+              <Play
+                size={21}
+                fill="currentColor"
+              />
             )}
           </button>
         </div>
@@ -1428,12 +2110,15 @@ export default function App() {
                 : "试听步频节拍"}
           </strong>
           <span>
-            {settings.cadence} SPM <i />
+            {settings.cadence} SPM
+            <i />
             {selectedTone?.name ?? "经典点击"}
           </span>
         </div>
         <div className="seek-area">
-          <span className="time-current">{formatTime(playback.position)}</span>
+          <span className="time-current">
+            {formatTime(playback.position)}
+          </span>
           <input
             type="range"
             aria-label="试听进度"
@@ -1451,7 +2136,9 @@ export default function App() {
               } as CSSProperties
             }
           />
-          <span className="time-total">{formatTime(totalDuration)}</span>
+          <span className="time-total">
+            {formatTime(totalDuration)}
+          </span>
         </div>
         <div className="transport-mode">
           <span
@@ -1461,17 +2148,24 @@ export default function App() {
             <i />
             <i />
           </span>
-          <span>{playback.playing ? "正在试听" : "待播放"}</span>
+          <span>
+            {playback.playing ? "正在试听" : "待播放"}
+          </span>
         </div>
       </section>
-
       {(error || notice) && (
         <div
           className={`toast ${error ? "error" : ""}`}
           role={error ? "alert" : "status"}
         >
-          {error ? <CircleHelp size={18} /> : <Check size={18} />}
-          <span>{error || notice}</span>
+          {error ?
+            <CircleHelp size={18} />
+            :
+            <Check size={18} />
+          }
+          <span>
+            {error || notice}
+          </span>
           <button
             className="icon-button"
             onClick={() => {
@@ -1484,9 +2178,11 @@ export default function App() {
           </button>
         </div>
       )}
-
       {helpOpen && (
-        <div className="modal-backdrop" onClick={() => setHelpOpen(false)}>
+        <div
+          className="modal-backdrop"
+          onClick={() => setHelpOpen(false)}
+        >
           <section
             className="help-modal"
             role="dialog"
@@ -1504,24 +2200,32 @@ export default function App() {
             <span className="help-icon">
               <Headphones size={26} />
             </span>
-            <h2 id="help-title">准备你的下一次跑步</h2>
+            <h2 id="help-title">
+              使用指南
+            </h2>
             <ol>
               <li>
-                <strong>添加配乐</strong>
+                <strong>
+                  添加配乐
+                </strong>
                 <p>
                   上传音频或视频、粘贴链接、搜索歌名，或使用 AI
                   生成配乐。支持连续添加多条。
                 </p>
               </li>
               <li>
-                <strong>设定你的步频</strong>
+                <strong>
+                  设定你的步频
+                </strong>
                 <p>
                   165 表示每分钟 165
                   次提示，一步一响。点击音色可以试听，上下箭头可以调整曲目顺序。
                 </p>
               </li>
               <li>
-                <strong>调好音量，导出出发</strong>
+                <strong>
+                  调好音量，导出出发
+                </strong>
                 <p>
                   背景音乐和节拍独立调整。导出 MP3 或 WAV
                   后，可传到手机离线播放。

@@ -47,3 +47,23 @@ App 顶层使用 .studio-shell、data-theme 和 data-text-size。主体布局为
 
 - [Spotify 桌面设计](https://newsroom.spotify.com/2023-06-20/spotify-desktop-experience-redesign-your-library-now-playing-views-customize/)
 - [Wallpaper Engine](https://store.steampowered.com/app/431960/Wallpaper_Engine/)
+
+## 原创背景素材
+
+两张场景使用内置 image_gen 工具生成并保存在 frontend/public/backgrounds，生成原图同时保留在 Codex generated_images 目录。
+
+forest.png 的提示词描述了晨曦下的常绿山谷、层叠松林、静湖、薄雾、石板蓝和森林绿，以及适合半透明界面的低对比摄影构图。原始完整提示词为
+
+> Use case: photorealistic-natural. Asset type: original landscape background for a running-music desktop app with animated fog layers added later in CSS. Create a cinematic wide 16:9 photograph of a misty evergreen mountain valley at early dawn, layered pine forest canopies, a quiet lake reflecting pale sky, natural slate blue and forest green, soft silver mist between tree ridges, subtle warm light on the distant horizon. Peaceful immersive atmosphere, realistic fine photographic texture, elegant subdued contrast, plenty of calm detail so translucent app panels remain readable over it. Landscape fills the entire frame. No people, typography, UI, logos, borders, or watermarks. Original scene.
+
+rain-city.png 的提示词描述了雨夜河滨步道、暖色窗灯、青蓝色建筑灯光、湿路面倒影和薄雾。原始完整提示词为
+
+> Use case: photorealistic-natural. Asset type: original widescreen scenic background for a music app with gentle animated rain added later in CSS. A cinematic 16:9 nighttime photograph of a quiet rain-soaked urban riverside promenade, modern city buildings in the distance with warm amber window grids, a few soft cyan and blue architectural lights, wet pavement reflecting the lights, subtle mist over the river. Beautiful atmospheric depth, refined realistic photography, subdued dark navy, steel blue and copper palette, no strong central spotlight, calm background detail suitable beneath readable translucent UI panels. Natural rain atmosphere, no people, no cars in the foreground, no billboards, no signs or visible text, no logos, no UI, no border, no watermark. Original scene.
+
+## 验收记录
+
+85 项后端测试与 35 项前端测试通过，TypeScript 与 Vite 生产构建通过。真实 Chromium 已完成本地导入、曲库搜索和重复加入、排序移除、BPM 校正、适配与恢复、相位校正、路由刷新和前进后退、六音色试听、独立音量与跨页静音恢复。切页、切主题和换背景时播放器共用原有音频引擎，制作适配版期间返回详情仍显示任务状态。
+
+七个页面在 1440px 和 390px、深浅主题及两档字号下无横向溢出，舒适档的主要辅助文字实际字号至少 14px。已检查四个场景、偏好保存、系统减少动态，以及页面隐藏时动画暂停。实际 WAV 下载时长为 35.4 秒，与测试编排一致。
+
+取消真实 MP3 导出时发现 Windows 日志共享锁会覆盖取消异常，必要修复位于 backend/audio.py，改用文件型 TemporaryFile 并先等待和关闭 FFmpeg 句柄。新增实际 FFmpeg 混音阶段取消回归，修复后连续三次通过界面取消，任务均进入 cancelled 终态。

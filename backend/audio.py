@@ -7,6 +7,7 @@ so rounding error never accumulates between beats.
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import wave
 from functools import lru_cache
@@ -238,31 +239,28 @@ def mix_audio(
         "-map", "[out]", "-ar", str(SAMPLE_RATE), "-ac", "2", *codec,
         "-progress", "pipe:1", "-nostats", str(destination),
     ]
-    log_path = destination.with_suffix(".stderr.log")
-    process = None
-    try:
-        with log_path.open("wb") as errors:
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True, **process_options())
+    with tempfile.TemporaryFile(dir=destination.parent) as errors:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True, **process_options())
+        try:
             assert process.stdout is not None
             for line in process.stdout:
                 if cancelled.is_set():
-                    process.terminate()
                     raise ExportCancelled()
                 if line.startswith("out_time_us="):
                     value = line.strip().split("=", 1)[1]
                     if value.isdigit():
                         progress(min(int(value) / 1_000_000 / (frame_count / SAMPLE_RATE), 1))
             process.wait()
-        if cancelled.is_set():
-            raise ExportCancelled()
-        if process.returncode:
-            details = log_path.read_text(encoding="utf-8", errors="replace")[-1200:]
-            raise AudioError(f"合成失败。{details}")
-    finally:
-        if process is not None:
+            if cancelled.is_set():
+                raise ExportCancelled()
+            if process.returncode:
+                log_size = errors.seek(0, os.SEEK_END)
+                errors.seek(max(0, log_size - 4800))
+                details = errors.read().decode("utf-8", errors="replace")[-1200:]
+                raise AudioError(f"合成失败。{details}")
+        finally:
             if process.poll() is None:
                 process.terminate()
             process.wait()
             if process.stdout is not None:
                 process.stdout.close()
-        log_path.unlink(missing_ok=True)
