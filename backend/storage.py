@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from backend.alignment import analyze_alignment
+from backend.adaptive import measure_segments, plan_segments, render_segments
 from backend.audio import SAMPLE_RATE, AudioError, audio_frame_count, normalize_audio, waveform_peaks
 from backend.models import Adaptation, Alignment, Tempo, Track
 from backend.tempo import analyze_tempo, cadence_references, change_tempo
@@ -259,16 +260,38 @@ class MediaLibrary:
             try:
                 with PROCESSING_LIMIT:
                     # Always render from the first source rather than stretching an
-                    # already processed file a second time.
-                    change_tempo(original_audio, directory / "audio.wav", total_speed)
+                    # already processed file a second time. Variable-tempo sources
+                    # get a measured piecewise render; stable sources keep the
+                    # existing single-filter path for identical, predictable output.
+                    output_music_bpm = measured_tempo.bpm * total_speed
+                    segments, adaptive_anchor = plan_segments(
+                        original_audio, measured_tempo.bpm, output_music_bpm, total_speed,
+                    )
+                    if segments and adaptive_anchor is not None:
+                        render_segments(
+                            original_audio, directory / "audio.wav", segments,
+                            output_music_bpm, adaptive_anchor,
+                        )
+                        drift_ms, coverage = measure_segments(
+                            directory / "audio.wav", segments, output_music_bpm,
+                            cadence, adaptive_anchor,
+                        )
+                        adaptation = Adaptation(
+                            original_id=original_id, speed=total_speed,
+                            reference_cadence=reference, target_cadence=cadence,
+                            mode="adaptive", segments=segments,
+                            drift_ms=drift_ms, coverage=coverage,
+                        )
+                    else:
+                        change_tempo(original_audio, directory / "audio.wav", total_speed)
+                        adaptation = Adaptation(
+                            original_id=original_id, speed=total_speed,
+                            reference_cadence=reference, target_cadence=cadence,
+                        )
                     adapted_tempo = Tempo(
                         bpm=round(measured_tempo.bpm * local_speed, 4),
                         confidence=current.tempo.confidence,
                         status=current.tempo.status, source="adapted",
-                    )
-                    adaptation = Adaptation(
-                        original_id=original_id, speed=total_speed,
-                        reference_cadence=reference, target_cadence=cadence,
                     )
                     original_title = self.get(original_id).title
                     title = f"{original_title} · {cadence:g} 步/分"

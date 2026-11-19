@@ -12,6 +12,19 @@ class Tempo(BaseModel):
     source: Literal["analysis", "manual", "adapted"] = "analysis"
 
 
+class AdaptationSegment(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    source_start: float = Field(ge=0)
+    source_end: float = Field(ge=0)
+    output_start: float = Field(ge=0)
+    output_end: float = Field(ge=0)
+    speed: float = Field(gt=0)
+    correction_ms: float = 0
+    confidence: float = Field(default=0, ge=0, le=1)
+    drift_ms: float | None = Field(default=None, ge=0)
+
+
 class Adaptation(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
@@ -19,6 +32,10 @@ class Adaptation(BaseModel):
     speed: float = Field(gt=0)
     reference_cadence: float = Field(ge=60, le=240)
     target_cadence: float = Field(ge=60, le=240)
+    mode: Literal["constant", "adaptive"] = "constant"
+    segments: list[AdaptationSegment] = Field(default_factory=list)
+    drift_ms: float | None = Field(default=None, ge=0)
+    coverage: float = Field(default=0, ge=0, le=1)
 
 
 class Alignment(BaseModel):

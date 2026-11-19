@@ -49,6 +49,21 @@ export interface TrackAdaptation {
   speed: number;
   reference_cadence: number;
   target_cadence: number;
+  mode?: "constant" | "adaptive";
+  segments?: AdaptationSegment[];
+  drift_ms?: number | null;
+  coverage?: number;
+}
+
+export interface AdaptationSegment {
+  source_start: number;
+  source_end: number;
+  output_start: number;
+  output_end: number;
+  speed: number;
+  correction_ms: number;
+  confidence: number;
+  drift_ms: number | null;
 }
 
 export interface Tone {

@@ -1,0 +1,83 @@
+.audition-scene {
+  position: fixed;
+  inset: 0 0 var(--transport-height);
+  z-index: 29;
+  overflow: hidden;
+  isolation: isolate;
+  background: #13242d;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(14px) scale(1.015);
+  transition: opacity 380ms ease, transform 550ms cubic-bezier(.2,.7,.1,1), visibility 550ms;
+  --audition-floor: rgba(8, 25, 34, .45);
+  --audition-ground-line: rgba(178, 222, 215, .1);
+}
+.audition-scene.is-open { opacity: 1; visibility: visible; pointer-events: auto; transform: none; }
+[data-theme="light"] .audition-scene { background: #edf4ed; --audition-floor: rgba(190, 212, 203, .36); --audition-ground-line: rgba(52, 101, 91, .15); }
+.audition-wallpaper { position: absolute; inset: 0; z-index: -3; opacity: .42; }
+.audition-wallpaper .wallpaper { position: absolute; z-index: 0; }
+.audition-wallpaper .wallpaper-image { filter: saturate(.68) blur(1px); }
+.audition-atmosphere { position: absolute; inset: 0; z-index: -2; background: linear-gradient(180deg, rgba(12,27,34,.7), transparent 50%, rgba(12,27,34,.75)), radial-gradient(ellipse at 50% 60%, rgba(151,210,193,.07), transparent 65%); }
+[data-theme="light"] .audition-atmosphere { background: linear-gradient(180deg, rgba(240,247,239,.8), rgba(240,247,239,.12) 50%, rgba(236,244,234,.85)); }
+.audition-header { position: absolute; z-index: 4; top: 26px; left: 32px; right: 32px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.audition-back, .audition-motion { min-height: 46px; display: inline-flex; align-items: center; gap: 10px; border: 1px solid var(--line-strong); border-radius: 999px; padding: 8px 17px; background: var(--panel-soft); backdrop-filter: blur(12px); color: var(--ink); font-size: 15px; }
+.audition-back:hover, .audition-motion:hover { border-color: var(--accent-line); background: var(--panel); }
+.audition-label { color: var(--muted); display: flex; align-items: center; gap: 10px; font-size: 14px; letter-spacing: .18em; }
+.audition-label i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.audition-motion { color: var(--muted); }
+.audition-title { position: absolute; z-index: 3; top: 105px; left: 32px; right: 32px; text-align: center; }
+.audition-title p { color: var(--muted); font-size: 15px; margin-bottom: 7px; letter-spacing: .08em; }
+.audition-title h2 { font-size: clamp(21px, 2.3vw, 31px); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 750px; margin: auto; }
+.audition-world { position: absolute; inset: 0; pointer-events: none; }
+.audition-person { position: absolute; height: min(43vh, 365px); bottom: 26%; left: 50%; transform: translateX(-50%); aspect-ratio: 260 / 360; }
+.audition-walker { width: 100%; height: 100%; display: block; filter: drop-shadow(0 6px 22px rgba(2,20,26,.1)); }
+.audition-horizon { position: absolute; top: 74%; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--accent-line) 35%, var(--accent-line) 65%, transparent); box-shadow: 0 -20px 90px 60px rgba(129,191,175,.035); }
+.audition-ground { position: absolute; top: 74%; bottom: 0; left: 0; right: 0; mask-image: linear-gradient(180deg, #000, rgba(0,0,0,.45)); }
+.audition-ground svg { width: 100%; height: 100%; display: block; }
+.audition-ground-fill { fill: var(--audition-floor); }
+.audition-ground-line, .audition-ground-grid { stroke: var(--audition-ground-line); stroke-width: 1; fill: none; }
+.audition-ground-grid { opacity: .65; }
+.audition-road-mark { stroke: var(--accent-line); stroke-width: 3; opacity: .5; fill: none; }
+.audition-footnote { position: absolute; bottom: calc(26% + 18px); left: calc(50% + 112px); display: flex; align-items: center; gap: 9px; color: var(--subtle); font-size: 14px; white-space: nowrap; }
+.audition-details { position: absolute; z-index: 3; bottom: 27px; left: 36px; right: 36px; display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; }
+.audition-cadence { display: flex; flex-direction: column; min-width: 150px; }
+.audition-cadence > span { font-size: 14px; color: var(--muted); }
+.audition-cadence strong { font-size: 45px; font-weight: 500; line-height: 1.3; font-variant-numeric: tabular-nums; letter-spacing: -.05em; }
+.audition-cadence small { font-size: 14px; color: var(--muted); margin-left: 12px; letter-spacing: 0; white-space: nowrap; font-weight: 400; }
+.audition-metrics { min-width: 0; }
+.audition-status { color: var(--muted); font-size: 14px; display: flex; align-items: center; gap: 9px; white-space: nowrap; padding-bottom: 8px; }
+.audition-status > span { width: 6px; height: 6px; border-radius: 50%; background: var(--subtle); }
+.audition-status > span.active { background: var(--accent); box-shadow: 0 0 12px var(--accent-line); }
+@media (max-width: 900px) {
+  .audition-details { left: 26px; right: 26px; gap: 20px; }
+  .audition-status { display: none; }
+  .audition-metrics { flex: 1; }
+}
+@media (max-width: 600px) {
+  .audition-header { top: 18px; left: 16px; right: 16px; gap: 8px; }
+  .audition-label { display: none; }
+  .audition-back, .audition-motion { font-size: 14px; padding: 8px 12px; gap: 7px; }
+  .audition-title { top: 91px; left: 22px; right: 22px; }
+  .audition-title p { font-size: 14px; }
+  .audition-title h2 { font-size: 22px; }
+  .audition-person { height: min(37vh, 320px); bottom: 29%; }
+  .audition-horizon, .audition-ground { top: 71%; }
+  .audition-footnote { left: 50%; transform: translateX(-50%); bottom: calc(29% - 35px); font-size: 13px; }
+  .audition-details { bottom: 19px; left: 22px; right: 22px; align-items: center; gap: 14px; }
+  .audition-cadence { min-width: 0; }
+  .audition-cadence strong { font-size: 35px; }
+  .audition-cadence small { display: block; font-size: 12px; margin-left: 0; line-height: 1.3; }
+  .audition-cadence > span { font-size: 13px; }
+}
+@media (max-height: 680px) and (min-width: 601px) {
+  .audition-title { top: 79px; }
+  .audition-title p { display: none; }
+  .audition-title h2 { font-size: 22px; }
+  .audition-person { height: 39vh; bottom: 26%; }
+  .audition-details { bottom: 16px; }
+  .audition-cadence strong { font-size: 34px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .audition-scene { transition: opacity 120ms ease, visibility 120ms; transform: none; }
+}

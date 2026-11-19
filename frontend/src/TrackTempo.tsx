@@ -11,11 +11,14 @@ import type { Track } from "./api";
 import { chooseCadenceReference, formatTempo } from "./tempo";
 import { formatTime } from "./timeline";
 import "./alignment.css";
+import { AdaptationOverview, LiveProcessing } from "./AdaptiveStatus";
 
 interface TrackTempoProps {
   track: Track;
   entryId: string;
   cadence: number;
+  position?: number;
+  onSeek?: (position: number) => void;
   onTrackUpdate: (track: Track) => void;
   onReplace: (track: Track) => void;
 }
@@ -24,6 +27,8 @@ export default function TrackTempo({
   track,
   entryId,
   cadence,
+  position,
+  onSeek,
   onTrackUpdate,
   onReplace,
 }: TrackTempoProps) {
@@ -196,9 +201,10 @@ export default function TrackTempo({
           ) : (
             <WandSparkles size={18} />
           )}
-          {operation === "adapting" ? "制作中…" : "适配当前步频"}
+          {operation === "adapting" ? "分析整曲并适配中…" : "适配整曲步频"}
         </button>
       </div>
+      {operation === "adapting" && <p className="auto-rhythm-status" role="status">正在分析整首歌的局部节奏、制作保留音高的适配音频并核对鼓点。长曲目需要一些时间。</p>}
       {track.adaptation && (
         <div className="adaptation-result">
           <span>
@@ -219,6 +225,8 @@ export default function TrackTempo({
           </button>
         </div>
       )}
+      {track.adaptation && <div className="adaptive-track-live"><LiveProcessing track={track} position={position ?? 0} cadence={cadence} /></div>}
+      <AdaptationOverview track={track} position={position} onSeek={onSeek} />
       <a
         className="secondary-button open-alignment"
         href={`#/track/${encodeURIComponent(entryId)}/align`}

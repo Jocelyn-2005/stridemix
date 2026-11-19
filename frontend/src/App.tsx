@@ -47,6 +47,8 @@ import {
 } from "./timeline";
 import TrackTempo from "./TrackTempo";
 import BeatAlignment from "./BeatAlignment";
+import AuditionScene from "./AuditionScene";
+import { LiveProcessing } from "./AdaptiveStatus";
 import DeleteTrackDialog from "./DeleteTrackDialog";
 import {
   createEntry,
@@ -165,7 +167,8 @@ export default function App() {
     parseRoute(window.location.hash, !!saved?.trackIds.length),
   );
   const [navigationOpen, setNavigationOpen] = useState(false);
-  const { appearance, updateAppearance } = useAppearance();
+  const { appearance, updateAppearance, uploadWallpaper, removeWallpaper, wallpaperBusy, wallpaperError } = useAppearance();
+  const [auditionOpen, setAuditionOpen] = useState(false);
   const [libraryTracks, setLibraryTracks] = useState<Track[]>([]);
   const [libraryQuery, setLibraryQuery] = useState("");
   const [deletionTarget, setDeletionTarget] = useState<{ track: Track; preview: DeletionPreview } | null>(null);
@@ -236,6 +239,7 @@ export default function App() {
     function syncRoute() {
       setRoute(parseRoute(window.location.hash, !!saved?.trackIds.length));
       setNavigationOpen(false);
+      setAuditionOpen(false);
     }
     const initial = parseRoute(window.location.hash, !!saved?.trackIds.length);
     window.history.replaceState(null, "", routeHash(initial));
@@ -520,7 +524,7 @@ export default function App() {
     });
   }
 
-  async function togglePlayback() {
+  async function togglePlayback(enterScene = false) {
     if (playback.playing || playPending) {
       playOperation.current += 1;
       engine.current?.pause();
@@ -557,6 +561,10 @@ export default function App() {
         );
       }
       await engine.current?.play();
+      if (enterScene && operation === playOperation.current) {
+        setNavigationOpen(false);
+        setAuditionOpen(true);
+      }
     } catch (reason) {
       if (operation === playOperation.current) {
         setError(
@@ -714,6 +722,14 @@ export default function App() {
   }
 
   const activeNavigation = route.page === "track" || route.page === "alignment" ? "mix" : route.page;
+  const activeEntry = entries[playback.activeIndex];
+  const activeTrack = activeEntry?.track;
+  const localPosition = activeEntry
+    ? Math.max(0, playback.position - timeline.tracks[playback.activeIndex].startFrame / SAMPLE_RATE)
+    : playback.position;
+  const activeOffset = activeEntry && alignmentPreview?.entryId === activeEntry.entryId && alignmentPreview.trackId === activeTrack?.id
+    ? alignmentPreview.offsetMs
+    : activeEntry?.phaseOffsetMs ?? 0;
   const navigation = [
     { page: "library", icon: Library },
     { page: "import", icon: Plus },
@@ -730,7 +746,7 @@ export default function App() {
     track: "程序自动提取音乐节奏和起拍，按目标步频制作适配版。",
     alignment: "对照节拍器与音乐鼓点试听，确认适合这条配乐的对齐位置。",
     export: "核对编排与混音设置，合成为可以离线播放的跑步配乐。",
-    appearance: "选择适合你的背景、明暗和字号。",
+    appearance: "上传喜欢的壁纸，选择背景、字体、明暗和字号。",
   };
 
   return (
@@ -738,6 +754,7 @@ export default function App() {
       className="studio-shell"
       data-theme={appearance.colorMode}
       data-text-size={appearance.textSize}
+      data-font={appearance.font}
     >
       <Wallpaper settings={appearance} />
       {navigationOpen && (
@@ -750,6 +767,7 @@ export default function App() {
       <aside
         className={`sidebar ${navigationOpen ? "is-open" : ""}`}
         aria-label="主导航"
+        inert={auditionOpen}
       >
         <a
           className="brand"
@@ -834,6 +852,7 @@ export default function App() {
       </aside>
       <main
         className="workspace-main"
+        inert={auditionOpen}
         id="main-content"
       >
         <header className="workspace-header">
@@ -1795,6 +1814,8 @@ export default function App() {
                   track={entry.track}
                   entryId={entry.entryId}
                   cadence={settings.cadence}
+                  position={playback.activeIndex === index ? localPosition : undefined}
+                  onSeek={(seconds) => seekPlayback(timeline.tracks[index].startFrame / SAMPLE_RATE + seconds)}
                   onTrackUpdate={handleTrackUpdate}
                   onReplace={(updated) => {
                     handleTrackUpdate(updated);
@@ -2070,12 +2091,31 @@ export default function App() {
             <AppearancePage
               settings={appearance}
               onChange={updateAppearance}
+              onUploadWallpaper={uploadWallpaper}
+              onRemoveWallpaper={removeWallpaper}
+              wallpaperBusy={wallpaperBusy}
+              wallpaperError={wallpaperError}
             />
           }
         </div>
       </main>
+      <AuditionScene
+        open={auditionOpen}
+        playback={playback}
+        cadence={settings.cadence}
+        trackTitle={activeTrack?.title ?? (tracks.length ? "曲间间隙" : "纯节拍试听")}
+        localPosition={localPosition}
+        anchorSeconds={activeTrack?.alignment?.anchor_seconds}
+        phaseOffsetMs={activeOffset}
+        hasTracks={tracks.length > 0}
+        background={<Wallpaper settings={{ ...appearance, motion: false }} />}
+        metrics={<LiveProcessing track={activeTrack} position={localPosition} cadence={settings.cadence} gap={tracks.length > 0 && !activeTrack} />}
+        motion={appearance.motion}
+        onClose={() => setAuditionOpen(false)}
+      />
       <section
         className="transport"
+        data-immersive={auditionOpen}
         aria-label="配乐试听"
       >
         <div className="transport-controls">
@@ -2090,7 +2130,7 @@ export default function App() {
           <button
             className={`play-button ${playback.playing ? "is-playing" : ""}`}
             disabled={!ready}
-            onClick={() => void togglePlayback()}
+            onClick={() => void togglePlayback(true)}
             aria-label={
               playback.playing || playPending ? "暂停试听" : "播放试听"
             }
@@ -2154,6 +2194,16 @@ export default function App() {
             {formatTime(totalDuration)}
           </span>
         </div>
+        {activeTrack && <LiveProcessing compact track={activeTrack} position={localPosition} cadence={settings.cadence} />}
+        <button
+          className="icon-button transport-scene-button"
+          aria-label={auditionOpen ? "返回工作台" : "打开行走试听场景"}
+          title={auditionOpen ? "返回工作台" : "行走试听"}
+          onClick={() => { setNavigationOpen(false); setAuditionOpen((open) => !open); }}
+          disabled={!ready}
+        >
+          {auditionOpen ? <ArrowLeft size={21} /> : <Headphones size={21} />}
+        </button>
         <div className="transport-mode">
           <span
             className={`playing-indicator ${playback.playing ? "active" : ""}`}
